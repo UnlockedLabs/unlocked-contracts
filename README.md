@@ -9,7 +9,7 @@ It holds only plain types and constants, with no dependencies.
 |---|---|
 | `features` | Feature-flag names (`features.OpenContent`, …) and `features.All` |
 | `jobs` | Job names (`jobs.GetCourses`, …) and each job's NATS subject (`PubName()`) |
-| `types` | User roles (`types.SystemAdmin`, …) and `types.AdminRoles` |
+| `users` | User roles (`users.SystemAdmin`, …) and `users.AdminRoles` |
 
 Every value here is stored in a database, sent over NATS or kept in Kratos
 identity traits. Changing one breaks running sites, so the tests pin each one.
@@ -50,6 +50,9 @@ replace github.com/UnlockedLabs/unlocked-contracts => ../unlocked-contracts
 From `v1.0.0`, a breaking change means a major bump.
 
 ## Release
+
+Releases are tagged by hand for now. release-please is deferred until we need
+more than the first few versions.
 
 After the PR merges, tag `main` and push the tag:
 

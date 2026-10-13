@@ -14,9 +14,9 @@ func TestValues(t *testing.T) {
 	}{
 		{features.OpenContent, "open_content"},
 		{features.ProviderPlatforms, "provider_platforms"},
-		{features.Programs, "program_management"},
+		{features.ProgramManagement, "program_management"},
 		{features.LearningRecord, "learning_record"},
-		{features.AiTutor, "ai_tutor"},
+		{features.AITutor, "ai_tutor"},
 		{features.RequestContent, "request_content"},
 		{features.HelpfulLinks, "helpful_links"},
 		{features.UploadVideo, "upload_video"},

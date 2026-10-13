@@ -9,9 +9,9 @@ type Access string
 const (
 	OpenContent       Access = "open_content"
 	ProviderPlatforms Access = "provider_platforms"
-	Programs          Access = "program_management"
+	ProgramManagement Access = "program_management"
 	LearningRecord    Access = "learning_record"
-	AiTutor           Access = "ai_tutor"
+	AITutor           Access = "ai_tutor"
 )
 
 // Page-level features, each gated by a top-level feature.
@@ -24,6 +24,6 @@ const (
 
 // All lists every feature.
 var All = []Access{
-	OpenContent, ProviderPlatforms, Programs, LearningRecord, AiTutor,
+	OpenContent, ProviderPlatforms, ProgramManagement, LearningRecord, AITutor,
 	RequestContent, HelpfulLinks, UploadVideo, ResidentPrograms,
 }
