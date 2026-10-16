@@ -3,11 +3,12 @@
 Shared Go types and contracts for `unlocked-core` and every UnlockEd feature.
 
 Features depend on this small, versioned module instead of on all of core.
-It holds only plain types and constants, with no dependencies.
+It holds plain types and constants, plus small clients for asking core
+things, with no dependencies outside the standard library.
 
 | Package | What it holds |
 |---|---|
-| `features` | Feature-flag names (`features.OpenContent`, …) and `features.All` |
+| `features` | Feature-flag names (`features.OpenContent`, …), `features.All`, and `features.Checker`, which asks core whether a feature is on at a facility |
 | `jobs` | Job names (`jobs.GetCourses`, …) and each job's NATS subject (`PubName()`) |
 | `users` | User roles (`users.SystemAdmin`, …) and `users.AdminRoles` |
 
@@ -25,6 +26,38 @@ import "github.com/UnlockedLabs/unlocked-contracts/jobs"
 
 subject := jobs.GetCourses.PubName() // "tasks.get_courses"
 ```
+
+### Check a feature
+
+Only core knows the rules (statewide defaults, facility overrides, sub-features
+off when their parent is off), so a module asks it. Make one `Checker` at
+startup and share it:
+
+```go
+import "github.com/UnlockedLabs/unlocked-contracts/features"
+
+checker := features.NewChecker("http://server:8080", nil) // core, inside the cluster
+
+on, err := checker.Enabled(ctx, facilityID, features.OpenContent)
+if err != nil {
+	log.Warn("feature check: core didn't answer", "err", err) // log it, don't fail on it
+}
+if !on {
+	// the feature is off at this facility
+}
+```
+
+- It calls core's `GET /internal/v1/features?facility_id=N`, which is only
+  reachable inside the cluster.
+- Each facility's answer is reused for 30 seconds (`features.CacheTTL`), so a
+  Feature Control change reaches every module within 30 seconds.
+- **It fails safe.** If core can't answer, the last answer is kept, however
+  old; with none, every feature reads as off. An error from `Enabled` only
+  means core didn't answer just now, and the bool is still safe to act on.
+  After a failed call it waits 30 seconds before asking again.
+- Only one call to core per facility runs at a time; other requests for that
+  facility wait for its answer. A request whose context is canceled stops
+  waiting, but the call goes on for everyone else (2-second timeout).
 
 ## Develop
 
