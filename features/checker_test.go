@@ -2,6 +2,7 @@ package features
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,11 +15,13 @@ import (
 const facility uint = 7
 
 // fakeCore answers like core's /internal/v1/features. Its reply is set per
-// call; it counts how many times it was asked.
+// call; it counts how many times it was asked. If hold is set, it doesn't
+// answer until hold is closed.
 type fakeCore struct {
 	mu    sync.Mutex
 	reply string
 	calls atomic.Int32
+	hold  chan struct{}
 }
 
 // Replies a fake core can give.
@@ -39,6 +42,9 @@ func (f *fakeCore) set(reply string) {
 
 func (f *fakeCore) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.calls.Add(1)
+	if f.hold != nil {
+		<-f.hold
+	}
 	f.mu.Lock()
 	reply := f.reply
 	f.mu.Unlock()
@@ -185,28 +191,55 @@ func TestCheckerCoreUnreachable(t *testing.T) {
 	}
 }
 
-// A canceled caller isn't a sign that core is down, so it must not start the
-// 30-second wait: the next call asks core right away.
-func TestCheckerCanceledCallerDoesNotBackOff(t *testing.T) {
-	core := &fakeCore{}
+// A caller that gives up only stops waiting itself: the call to core goes on,
+// and everyone else waiting on it gets core's answer.
+func TestCheckerCanceledCallerDoesNotAffectOthers(t *testing.T) {
+	core := &fakeCore{hold: make(chan struct{})}
 	core.set(openContentOn)
 	srv := httptest.NewServer(core)
 	defer srv.Close()
 	c := NewChecker(srv.URL, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if got, err := c.Enabled(ctx, facility, OpenContent); got || err == nil {
-		t.Fatalf("canceled: Enabled = %v, %v; want false and an error", got, err)
+	first := make(chan error)
+	go func() {
+		got, err := c.Enabled(ctx, facility, OpenContent)
+		if got {
+			t.Error("canceled caller: Enabled = true, want false")
+		}
+		first <- err
+	}()
+	for core.calls.Load() == 0 {
+		time.Sleep(time.Millisecond)
 	}
-	if got, err := c.Enabled(context.Background(), facility, OpenContent); !got || err != nil {
-		t.Fatalf("next call: Enabled = %v, %v; want true and no error", got, err)
+
+	second := make(chan bool)
+	go func() {
+		got, err := c.Enabled(context.Background(), facility, OpenContent)
+		if err != nil {
+			t.Errorf("waiting caller: err = %v, want nil", err)
+		}
+		second <- got
+	}()
+
+	cancel()
+	if err := <-first; !errors.Is(err, context.Canceled) {
+		t.Errorf("canceled caller: err = %v, want context.Canceled", err)
+	}
+	close(core.hold)
+	if !<-second {
+		t.Error("waiting caller: Enabled = false, want true")
+	}
+	if calls := core.calls.Load(); calls != 1 {
+		t.Errorf("core was called %d times, want 1", calls)
 	}
 }
 
-// Many requests at once share the cache safely (run with -race).
+// Many requests at once share one call to core (run with -race). Because only
+// one call per facility runs at a time, a slow failure can't overwrite a newer
+// answer.
 func TestCheckerConcurrent(t *testing.T) {
-	core := &fakeCore{}
+	core := &fakeCore{hold: make(chan struct{})}
 	core.set(openContentOn)
 	srv := httptest.NewServer(core)
 	defer srv.Close()
@@ -220,5 +253,12 @@ func TestCheckerConcurrent(t *testing.T) {
 			}
 		})
 	}
+	for core.calls.Load() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	close(core.hold)
 	wg.Wait()
+	if calls := core.calls.Load(); calls != 1 {
+		t.Errorf("core was called %d times, want 1", calls)
+	}
 }

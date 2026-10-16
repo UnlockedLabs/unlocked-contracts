@@ -55,6 +55,9 @@ if !on {
   old; with none, every feature reads as off. An error from `Enabled` only
   means core didn't answer just now, and the bool is still safe to act on.
   After a failed call it waits 30 seconds before asking again.
+- Only one call to core per facility runs at a time; other requests for that
+  facility wait for its answer. A request whose context is canceled stops
+  waiting, but the call goes on for everyone else (2-second timeout).
 
 ## Develop
 
