@@ -9,6 +9,7 @@ things, with no dependencies outside the standard library.
 | Package | What it holds |
 |---|---|
 | `features` | Feature-flag names (`features.OpenContent`, …), `features.All`, and `features.Checker`, which asks core whether a feature is on at a facility |
+| `identity` | `identity.Claims`, who is logged in, and how to read them from a request's context |
 | `jobs` | Job names (`jobs.GetCourses`, …) and each job's NATS subject (`PubName()`) |
 | `users` | User roles (`users.SystemAdmin`, …) and `users.AdminRoles` |
 
@@ -18,13 +19,30 @@ identity traits. Changing one breaks running sites, so the tests pin each one.
 ## Use it
 
 ```bash
-go get github.com/UnlockedLabs/unlocked-contracts@v0.1.0
+go get github.com/UnlockedLabs/unlocked-contracts@v0.2.0
 ```
 
 ```go
 import "github.com/UnlockedLabs/unlocked-contracts/jobs"
 
 subject := jobs.GetCourses.PubName() // "tasks.get_courses"
+```
+
+### Who is logged in
+
+Core checks the login session and puts the user's `identity.Claims` on every
+request it hands a module:
+
+```go
+import "github.com/UnlockedLabs/unlocked-contracts/identity"
+
+claims, ok := identity.FromContext(r.Context())
+if !ok {
+	// no logged-in user: core only sends authenticated requests, so this is a bug
+}
+if claims.IsAdmin() {
+	// …
+}
 ```
 
 ### Check a feature
