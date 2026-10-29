@@ -96,10 +96,11 @@ func (c *SessionChecker) Require(next http.Handler) http.Handler {
 // Core checks the user before the password reset, so a deactivated user is
 // told they aren't logged in either way.
 func (c *SessionChecker) claims(r *http.Request) (*Claims, error) {
-	if _, err := r.Cookie(sessionCookie); err != nil {
+	cookie, err := r.Cookie(sessionCookie)
+	if err != nil {
 		return nil, errNotLoggedIn
 	}
-	session, err := c.whoami(r.Context(), r.Header.Get("Cookie"))
+	session, err := c.whoami(r.Context(), cookie)
 	if err != nil {
 		return nil, err
 	}
@@ -127,16 +128,17 @@ type session struct {
 	} `json:"identity"`
 }
 
-// whoami sends the request's cookies to Kratos, which answers 401 for a
-// missing or expired session.
-func (c *SessionChecker) whoami(ctx context.Context, cookies string) (*session, error) {
+// whoami sends the session cookie to Kratos, which answers 401 for a missing
+// or expired session. It sends no other cookie, so it doesn't matter how the
+// browser split them across Cookie headers.
+func (c *SessionChecker) whoami(ctx context.Context, cookie *http.Cookie) (*session, error) {
 	ctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.kratosURL+"/sessions/whoami", nil)
 	if err != nil {
 		return nil, fmt.Errorf("build whoami request: %w", err)
 	}
-	req.Header.Set("Cookie", cookies)
+	req.AddCookie(cookie)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("ask kratos whoami: %w", err)

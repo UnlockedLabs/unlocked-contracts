@@ -156,6 +156,18 @@ func TestRequire(t *testing.T) {
 			wantStatus: http.StatusOK, wantKratos: 1, wantCore: 1,
 		},
 		{
+			name:   "a HEAD needs no CSRF token",
+			method: http.MethodHead, cookies: "ory_kratos_session=abc",
+			kratosBody: activeSession, coreBody: coreClaims,
+			wantStatus: http.StatusOK, wantKratos: 1, wantCore: 1,
+		},
+		{
+			name:   "an OPTIONS needs no CSRF token",
+			method: http.MethodOptions, cookies: "ory_kratos_session=abc",
+			kratosBody: activeSession, coreBody: coreClaims,
+			wantStatus: http.StatusOK, wantKratos: 1, wantCore: 1,
+		},
+		{
 			name:       "a write without a CSRF header is refused",
 			method:     http.MethodDelete,
 			kratosBody: activeSession, coreBody: coreClaims,
@@ -192,8 +204,8 @@ func TestRequire(t *testing.T) {
 				if r.URL.Path != "/sessions/whoami" {
 					t.Errorf("Kratos got path %q, want /sessions/whoami", r.URL.Path)
 				}
-				if got := r.Header.Get("Cookie"); got != cookies {
-					t.Errorf("Kratos got cookies %q, want %q", got, cookies)
+				if got := r.Header.Get("Cookie"); got != "ory_kratos_session=abc" {
+					t.Errorf("Kratos got cookies %q, want only the session cookie", got)
 				}
 			}}
 			core := &fake{status: orOK(tt.coreStatus), body: tt.coreBody, check: func(r *http.Request) {
@@ -253,6 +265,31 @@ func TestRequire(t *testing.T) {
 				t.Errorf("body = %+v, want message %q and null data", body, tt.wantMessage)
 			}
 		})
+	}
+}
+
+// HTTP/2 lets a browser send each cookie in its own Cookie header. Kratos
+// still gets the session cookie, and only that one.
+func TestRequireSplitCookieHeaders(t *testing.T) {
+	kratos := httptest.NewServer(&fake{status: http.StatusOK, body: activeSession, check: func(r *http.Request) {
+		if got := r.Header.Values("Cookie"); len(got) != 1 || got[0] != "ory_kratos_session=abc" {
+			t.Errorf("Kratos got cookies %q, want only the session cookie", got)
+		}
+	}})
+	defer kratos.Close()
+	core := httptest.NewServer(&fake{status: http.StatusOK, body: coreClaims})
+	defer core.Close()
+
+	var reached bool
+	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true })
+	req := httptest.NewRequest(http.MethodGet, "/api/things", nil)
+	req.Header.Add("Cookie", "csrf_token="+csrfToken)
+	req.Header.Add("Cookie", "ory_kratos_session=abc")
+	w := httptest.NewRecorder()
+	identity.NewSessionChecker(kratos.URL, core.URL, nil).Require(next).ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK || !reached {
+		t.Errorf("status = %d, next called = %v, want 200 and called (body %s)", w.Code, reached, w.Body)
 	}
 }
 
