@@ -1,5 +1,7 @@
 // Package identity says who is logged in. Core checks the login session and
 // builds the Claims; a feature module reads them from the request's context.
+// A product service that gets requests straight from the ingress checks the
+// session itself with a SessionChecker, which asks core for the same Claims.
 package identity
 
 import (
