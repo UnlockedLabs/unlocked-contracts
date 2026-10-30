@@ -68,14 +68,19 @@ It checks what core checks, in the same order:
 - **A password reset:** a user whose `password_reset` trait isn't `false`
   must reset it in core first: 403.
 - **CSRF:** any request other than GET, HEAD or OPTIONS must send the
-  `csrf_token` cookie's value (set by core) in the `X-CSRF-Token` header:
-  403.
+  `csrf_token` cookie's value in the `X-CSRF-Token` header: 403. Like core,
+  it gives a logged-in browser that has no `csrf_token` cookie a new one, so
+  the browser's next write works.
 
-Errors use core's JSON shape, `{"message": "...", "data": null}`.
+Errors use core's JSON shape, `{"message": "...", "data": null}`. A request
+turned away as not logged in is logged with `slog` at Info, with the reason.
 
+- **It needs a core with `/internal/v1/claims`** (EN-256). Against an older
+  core, every request gets a 503 and an Error log, not a logout.
 - **It fails closed.** If Kratos or core can't answer, the request gets a 503
-  (logged with `slog`), never a pass. Unlike core, it doesn't clear the
-  browser's cookies, so a blip doesn't log anyone out.
+  (logged with `slog` at Error, unless the browser had already hung up),
+  never a pass. Unlike core, it doesn't clear the browser's cookies, so a
+  blip doesn't log anyone out.
 - **Nothing is cached:** each request asks Kratos and core, as core asks
   Kratos and its database, so a logout or a deactivation applies to the next
   request. Each call times out after 2 seconds.

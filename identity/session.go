@@ -2,7 +2,9 @@ package identity
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,6 +38,11 @@ var (
 	errPasswordReset = errors.New("password reset required")
 )
 
+// notLoggedIn is errNotLoggedIn with the reason, for the log.
+func notLoggedIn(reason string) error {
+	return fmt.Errorf("%w: %s", errNotLoggedIn, reason)
+}
+
 // SessionChecker checks a request's login session the same way core does, for
 // a product service whose requests come straight from the ingress instead of
 // through core. It is safe for concurrent use.
@@ -61,29 +68,36 @@ func NewSessionChecker(kratosURL, coreURL string, client *http.Client) *SessionC
 }
 
 // Require runs next with the logged-in user's Claims on the request's context,
-// the same Claims core builds for them. Otherwise it answers in core's JSON
-// error shape:
+// the same Claims core builds for them. Like core, it gives a logged-in
+// browser a csrf_token cookie when it has none. Otherwise it answers in core's
+// JSON error shape:
 //   - 401 when no one is logged in: no session cookie, a session Kratos says
-//     isn't active, or a user core doesn't know or has deactivated;
+//     isn't active, or a user core doesn't know or has deactivated. Logged
+//     with slog at Info, with the reason;
 //   - 403 when the user must reset their password first, or a request other
 //     than GET, HEAD or OPTIONS lacks a matching CSRF token;
-//   - 503 when Kratos or core couldn't answer, logged with slog. It never
-//     lets a request through without a check.
+//   - 503 when Kratos or core couldn't answer, logged with slog at Error
+//     unless the browser had already hung up. It never lets a request
+//     through without a check.
 func (c *SessionChecker) Require(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims, err := c.claims(r)
 		switch {
 		case errors.Is(err, errNotLoggedIn):
+			slog.InfoContext(r.Context(), "identity: not logged in", "reason", err)
 			writeError(w, http.StatusUnauthorized, "not logged in")
 			return
 		case errors.Is(err, errPasswordReset):
 			writeError(w, http.StatusForbidden, "password reset required")
 			return
 		case err != nil:
-			slog.ErrorContext(r.Context(), "identity: check login session", "err", err)
+			if r.Context().Err() == nil {
+				slog.ErrorContext(r.Context(), "identity: check login session", "err", err)
+			}
 			writeError(w, http.StatusServiceUnavailable, "login check unavailable, try again")
 			return
 		}
+		ensureCSRFCookie(w, r)
 		if msg := csrfProblem(r); msg != "" {
 			writeError(w, http.StatusForbidden, msg)
 			return
@@ -98,7 +112,7 @@ func (c *SessionChecker) Require(next http.Handler) http.Handler {
 func (c *SessionChecker) claims(r *http.Request) (*Claims, error) {
 	cookie, err := r.Cookie(sessionCookie)
 	if err != nil {
-		return nil, errNotLoggedIn
+		return nil, notLoggedIn("no session cookie")
 	}
 	session, err := c.whoami(r.Context(), cookie)
 	if err != nil {
@@ -147,7 +161,7 @@ func (c *SessionChecker) whoami(ctx context.Context, cookie *http.Cookie) (*sess
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return nil, errNotLoggedIn
+		return nil, notLoggedIn("kratos answered " + resp.Status)
 	default:
 		return nil, fmt.Errorf("kratos whoami answered %s", resp.Status)
 	}
@@ -157,7 +171,7 @@ func (c *SessionChecker) whoami(ctx context.Context, cookie *http.Cookie) (*sess
 		return nil, fmt.Errorf("read kratos whoami answer: %w", err)
 	}
 	if !s.Active {
-		return nil, errNotLoggedIn
+		return nil, notLoggedIn("session isn't active")
 	}
 	if s.ID == "" || s.Identity.ID == "" {
 		return nil, errors.New("kratos whoami answer has no session or identity id")
@@ -182,8 +196,15 @@ func (c *SessionChecker) userClaims(ctx context.Context, kratosID string) (*Clai
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusNotFound, http.StatusForbidden:
-		// No such user, or a deactivated one.
-		return nil, errNotLoggedIn
+		// No such user, or a deactivated one, in core's JSON error. Any other
+		// 404, such as a core without this route, is a fault, not a logout.
+		var e struct {
+			Message string `json:"message"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&e); err != nil || e.Message == "" {
+			return nil, fmt.Errorf("core answered %s for claims without its JSON error", resp.Status)
+		}
+		return nil, notLoggedIn("core: " + e.Message)
 	default:
 		return nil, fmt.Errorf("core answered %s for claims", resp.Status)
 	}
@@ -199,6 +220,26 @@ func (c *SessionChecker) userClaims(ctx context.Context, kratosID string) (*Clai
 		return nil, errors.New("core's claims have no user id")
 	}
 	return &body.Data, nil
+}
+
+// ensureCSRFCookie gives a browser with no csrf_token cookie a new token, as
+// core does for every logged-in request (ensureCSRFToken, with the same
+// attributes), so a product's writes don't depend on the browser having
+// visited core recently.
+func ensureCSRFCookie(w http.ResponseWriter, r *http.Request) {
+	if _, err := r.Cookie(csrfCookie); err == nil {
+		return
+	}
+	b := make([]byte, 32)
+	_, _ = rand.Read(b) // never fails since Go 1.24
+	http.SetCookie(w, &http.Cookie{
+		Name:     csrfCookie,
+		Value:    base64.StdEncoding.EncodeToString(b),
+		Path:     "/",
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   12 * 60 * 60,
+	})
 }
 
 // csrfProblem is core's double-submit check: a request that can change

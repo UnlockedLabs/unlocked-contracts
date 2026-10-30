@@ -1,10 +1,15 @@
 package identity_test
 
 import (
+	"bytes"
+	"context"
+	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -73,6 +78,7 @@ func TestRequire(t *testing.T) {
 		wantMessage  string
 		wantKratos   int32 // calls to Kratos
 		wantCore     int32 // calls to core
+		wantCSRF     bool  // a new csrf_token cookie is set
 	}{
 		{
 			name:       "a logged-in user gets core's claims and the session id",
@@ -108,6 +114,22 @@ func TestRequire(t *testing.T) {
 			name:       "a deactivated user is turned away",
 			kratosBody: activeSession, coreStatus: http.StatusForbidden, coreBody: `{"message":"account deactivated","data":null}`,
 			wantStatus: http.StatusUnauthorized, wantMessage: "not logged in", wantKratos: 1, wantCore: 1,
+		},
+		{
+			// What Go's mux answers when core doesn't have the route.
+			name:       "a 404 that isn't core's JSON error is unavailable, not a logout",
+			kratosBody: activeSession, coreStatus: http.StatusNotFound, coreBody: "404 page not found\n",
+			wantStatus: http.StatusServiceUnavailable, wantMessage: "login check unavailable, try again", wantKratos: 1, wantCore: 1,
+		},
+		{
+			name:       "a 404 with no message is unavailable",
+			kratosBody: activeSession, coreStatus: http.StatusNotFound, coreBody: `{"data":null}`,
+			wantStatus: http.StatusServiceUnavailable, wantMessage: "login check unavailable, try again", wantKratos: 1, wantCore: 1,
+		},
+		{
+			name:       "a 403 that isn't core's JSON error is unavailable",
+			kratosBody: activeSession, coreStatus: http.StatusForbidden, coreBody: "forbidden",
+			wantStatus: http.StatusServiceUnavailable, wantMessage: "login check unavailable, try again", wantKratos: 1, wantCore: 1,
 		},
 		{
 			name:       "a user who must reset their password is refused",
@@ -159,13 +181,13 @@ func TestRequire(t *testing.T) {
 			name:   "a HEAD needs no CSRF token",
 			method: http.MethodHead, cookies: "ory_kratos_session=abc",
 			kratosBody: activeSession, coreBody: coreClaims,
-			wantStatus: http.StatusOK, wantKratos: 1, wantCore: 1,
+			wantStatus: http.StatusOK, wantKratos: 1, wantCore: 1, wantCSRF: true,
 		},
 		{
 			name:   "an OPTIONS needs no CSRF token",
 			method: http.MethodOptions, cookies: "ory_kratos_session=abc",
 			kratosBody: activeSession, coreBody: coreClaims,
-			wantStatus: http.StatusOK, wantKratos: 1, wantCore: 1,
+			wantStatus: http.StatusOK, wantKratos: 1, wantCore: 1, wantCSRF: true,
 		},
 		{
 			name:       "a write without a CSRF header is refused",
@@ -174,10 +196,29 @@ func TestRequire(t *testing.T) {
 			wantStatus: http.StatusForbidden, wantMessage: "CSRF token missing", wantKratos: 1, wantCore: 1,
 		},
 		{
-			name:   "a write without a CSRF cookie is refused",
+			// As in core: the browser gets a cookie now, and its next write works.
+			name:   "a write without a CSRF cookie is refused, and gets one",
 			method: http.MethodPatch, csrfHeader: csrfToken, cookies: "ory_kratos_session=abc",
 			kratosBody: activeSession, coreBody: coreClaims,
-			wantStatus: http.StatusForbidden, wantMessage: "CSRF token missing", wantKratos: 1, wantCore: 1,
+			wantStatus: http.StatusForbidden, wantMessage: "CSRF token missing", wantKratos: 1, wantCore: 1, wantCSRF: true,
+		},
+		{
+			name:       "a logged-in browser without a CSRF cookie gets one",
+			cookies:    "ory_kratos_session=abc",
+			kratosBody: activeSession, coreBody: coreClaims,
+			wantStatus: http.StatusOK, wantKratos: 1, wantCore: 1, wantCSRF: true,
+		},
+		{
+			name:         "a browser that isn't logged in gets no CSRF cookie",
+			cookies:      "ory_kratos_session=abc",
+			kratosStatus: http.StatusUnauthorized, kratosBody: `{}`,
+			wantStatus: http.StatusUnauthorized, wantMessage: "not logged in", wantKratos: 1,
+		},
+		{
+			name:       "a user who must reset their password gets no CSRF cookie",
+			cookies:    "ory_kratos_session=abc",
+			kratosBody: resetSession, coreBody: coreClaims,
+			wantStatus: http.StatusForbidden, wantMessage: "password reset required", wantKratos: 1, wantCore: 1,
 		},
 		{
 			name:   "a write with the wrong CSRF token is refused",
@@ -242,6 +283,7 @@ func TestRequire(t *testing.T) {
 			if n := core.calls.Load(); n != tt.wantCore {
 				t.Errorf("core was called %d times, want %d", n, tt.wantCore)
 			}
+			checkCSRFCookie(t, w.Result().Cookies(), tt.wantCSRF)
 			if tt.wantStatus == http.StatusOK {
 				if !reached {
 					t.Fatal("next wasn't called")
@@ -263,6 +305,127 @@ func TestRequire(t *testing.T) {
 			}
 			if body.Message != tt.wantMessage || body.Data != nil {
 				t.Errorf("body = %+v, want message %q and null data", body, tt.wantMessage)
+			}
+		})
+	}
+}
+
+// checkCSRFCookie checks that a csrf_token cookie was set only when want is
+// true, and with core's attributes.
+func checkCSRFCookie(t *testing.T, cookies []*http.Cookie, want bool) {
+	t.Helper()
+	var got *http.Cookie
+	for _, c := range cookies {
+		if c.Name == "csrf_token" {
+			got = c
+		}
+	}
+	if !want {
+		if got != nil {
+			t.Errorf("a csrf_token cookie was set: %v", got)
+		}
+		return
+	}
+	if got == nil {
+		t.Fatal("no csrf_token cookie was set")
+	}
+	if b, err := base64.StdEncoding.DecodeString(got.Value); err != nil || len(b) != 32 {
+		t.Errorf("csrf_token = %q, want 32 random bytes in base64", got.Value)
+	}
+	if got.Path != "/" || !got.Secure || got.HttpOnly || got.SameSite != http.SameSiteLaxMode || got.MaxAge != 43200 {
+		t.Errorf("csrf_token cookie = %v, want core's Path=/; Max-Age=43200; Secure; SameSite=Lax, readable by scripts", got)
+	}
+}
+
+// Two browsers each get their own token.
+func TestRequireCSRFCookieIsRandom(t *testing.T) {
+	kratos := httptest.NewServer(&fake{status: http.StatusOK, body: activeSession})
+	defer kratos.Close()
+	core := httptest.NewServer(&fake{status: http.StatusOK, body: coreClaims})
+	defer core.Close()
+	h := identity.NewSessionChecker(kratos.URL, core.URL, nil).Require(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+
+	tokens := map[string]bool{}
+	for range 2 {
+		req := httptest.NewRequest(http.MethodGet, "/api/things", nil)
+		req.Header.Set("Cookie", "ory_kratos_session=abc")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		for _, c := range w.Result().Cookies() {
+			tokens[c.Value] = true
+		}
+	}
+	if len(tokens) != 2 {
+		t.Errorf("got tokens %v, want two different ones", tokens)
+	}
+}
+
+// What Require logs: why a request was turned away, and a real outage, but
+// not a browser that hung up.
+func TestRequireLogs(t *testing.T) {
+	tests := []struct {
+		name       string
+		cookies    string
+		coreStatus int
+		coreBody   string
+		hungUp     bool
+		wantLog    string // "" means nothing is logged
+	}{
+		{
+			name:    "no session cookie",
+			wantLog: `level=INFO msg="identity: not logged in" reason="not logged in: no session cookie"`,
+		},
+		{
+			name:       "a user core doesn't know",
+			cookies:    "ory_kratos_session=abc",
+			coreStatus: http.StatusNotFound, coreBody: `{"message":"user not found","data":null}`,
+			wantLog: `level=INFO msg="identity: not logged in" reason="not logged in: core: user not found"`,
+		},
+		{
+			name:       "a core without the claims route",
+			cookies:    "ory_kratos_session=abc",
+			coreStatus: http.StatusNotFound, coreBody: "404 page not found\n",
+			wantLog: `level=ERROR msg="identity: check login session" err="core answered 404 Not Found for claims without its JSON error"`,
+		},
+		{
+			name:    "a browser that hung up",
+			cookies: "ory_kratos_session=abc",
+			hungUp:  true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			old := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(old) })
+
+			kratos := httptest.NewServer(&fake{status: http.StatusOK, body: activeSession})
+			defer kratos.Close()
+			core := httptest.NewServer(&fake{status: orOK(tt.coreStatus), body: tt.coreBody})
+			defer core.Close()
+
+			req := httptest.NewRequest(http.MethodGet, "/api/things", nil)
+			if tt.cookies != "" {
+				req.Header.Set("Cookie", tt.cookies)
+			}
+			if tt.hungUp {
+				ctx, cancel := context.WithCancel(req.Context())
+				cancel()
+				req = req.WithContext(ctx)
+			}
+			w := httptest.NewRecorder()
+			identity.NewSessionChecker(kratos.URL, core.URL, nil).Require(http.NotFoundHandler()).ServeHTTP(w, req)
+
+			got := logs.String()
+			if tt.wantLog == "" {
+				if got != "" {
+					t.Errorf("logged %q, want nothing", got)
+				}
+				return
+			}
+			if strings.Count(got, "\n") != 1 || !strings.Contains(got, tt.wantLog) {
+				t.Errorf("logged %q, want one line with %q", got, tt.wantLog)
 			}
 		})
 	}
