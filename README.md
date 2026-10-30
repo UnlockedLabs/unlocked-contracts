@@ -9,7 +9,7 @@ things, with no dependencies outside the standard library.
 | Package | What it holds |
 |---|---|
 | `features` | Feature-flag names (`features.OpenContent`, …), `features.All`, and `features.Checker`, which asks core whether a feature is on at a facility |
-| `identity` | `identity.Claims`, who is logged in, and how to read them from a request's context |
+| `identity` | `identity.Claims`, who is logged in, how to read them from a request's context, and `identity.SessionChecker`, which checks the login for a product service |
 | `jobs` | Job names (`jobs.GetCourses`, …) and each job's NATS subject (`PubName()`) |
 | `users` | User roles (`users.SystemAdmin`, …) and `users.AdminRoles` |
 
@@ -19,7 +19,7 @@ identity traits. Changing one breaks running sites, so the tests pin each one.
 ## Use it
 
 ```bash
-go get github.com/UnlockedLabs/unlocked-contracts@v0.2.0
+go get github.com/UnlockedLabs/unlocked-contracts@v0.2.1
 ```
 
 ```go
@@ -44,6 +44,46 @@ if claims.IsAdmin() {
 	// …
 }
 ```
+
+### Check the login in a product service
+
+A product in its own service gets its requests straight from the ingress, not
+through core, so it checks the login itself. Make one `SessionChecker` at
+startup and wrap every route that needs a logged-in user:
+
+```go
+import "github.com/UnlockedLabs/unlocked-contracts/identity"
+
+sessions := identity.NewSessionChecker("http://kratos:4433", "http://server:8080", nil)
+mux.Handle("GET /api/things", sessions.Require(listThings))
+
+// in listThings: the same Claims core would build for this user
+claims, _ := identity.FromContext(r.Context())
+```
+
+It checks what core checks, in the same order:
+- **The login:** Kratos's `whoami` must say the `ory_kratos_session` cookie's
+  session is active, and core's `GET /internal/v1/claims?kratos_id=…` must
+  know the user and not have deactivated them. Otherwise: 401.
+- **A password reset:** a user whose `password_reset` trait isn't `false`
+  must reset it in core first: 403.
+- **CSRF:** any request other than GET, HEAD or OPTIONS must send the
+  `csrf_token` cookie's value in the `X-CSRF-Token` header: 403. Like core,
+  it gives a logged-in browser that has no `csrf_token` cookie a new one, so
+  the browser's next write works.
+
+Errors use core's JSON shape, `{"message": "...", "data": null}`. A request
+turned away as not logged in is logged with `slog` at Info, with the reason.
+
+- **It needs a core with `/internal/v1/claims`** (EN-256). Against an older
+  core, every request gets a 503 and an Error log, not a logout.
+- **It fails closed.** If Kratos or core can't answer, the request gets a 503
+  (logged with `slog` at Error, unless the browser had already hung up),
+  never a pass. Unlike core, it doesn't clear the browser's cookies, so a
+  blip doesn't log anyone out.
+- **Nothing is cached:** each request asks Kratos and core, as core asks
+  Kratos and its database, so a logout or a deactivation applies to the next
+  request. Each call times out after 2 seconds.
 
 ### Check a feature
 
