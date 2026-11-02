@@ -127,16 +127,21 @@ HTTP. Both sides come from this package, so they always agree:
 import "github.com/UnlockedLabs/unlocked-contracts/opencontent"
 
 // core: one Client at startup, used wherever it needs an opencontent.OpenContent
-oc := opencontent.NewClient("http://open-content:8080", nil)
+oc := opencontent.NewClient("http://open-content:8080", os.Getenv("OPEN_CONTENT_TOKEN"), nil)
 libraries, err := oc.TopLibraries(ctx, userID, facilityID)
 
 // Open Content: serve its answers (anything that implements OpenContent)
-mux.Handle("/internal/v1/open-content/", opencontent.NewHandler(answers))
+mux.Handle("/internal/v1/open-content/", opencontent.NewHandler(answers, os.Getenv("OPEN_CONTENT_TOKEN")))
 ```
 
 - Each question is a `POST /internal/v1/open-content/<question>` with its
   arguments as JSON, answered in core's `{"message", "data"}` shape. The
   ingress never routes `/internal`, so only the cluster can reach it.
+- Only core may ask: the Client sends the site's secret as a bearer token,
+  and the handler answers a missing or wrong one, or every request if it has
+  no token, with a 401. Core and Open Content get the same secret, such as
+  `OPEN_CONTENT_TOKEN`. The demo reset deletes activity at every facility, so
+  nothing else in the cluster should be able to call it.
 - Any answer but a 200 is an error, with Open Content's message. Arguments
   that aren't valid JSON get a 400; an error from Open Content a 500, logged
   with `slog`.
