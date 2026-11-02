@@ -11,6 +11,7 @@ things, with no dependencies outside the standard library.
 | `features` | Feature-flag names (`features.OpenContent`, …), `features.All`, and `features.Checker`, which asks core whether a feature is on at a facility |
 | `identity` | `identity.Claims`, who is logged in, how to read them from a request's context, and `identity.SessionChecker`, which checks the login for a product service |
 | `jobs` | Job names (`jobs.GetCourses`, …) and each job's NATS subject (`PubName()`) |
+| `opencontent` | What core asks Open Content: the `OpenContent` interface and its types, `opencontent.Client` (core's side) and `opencontent.NewHandler` (Open Content's side), and the `Notification` Open Content sends to core's websocket |
 | `users` | User roles (`users.SystemAdmin`, …) and `users.AdminRoles` |
 
 Every value here is stored in a database, sent over NATS or kept in Kratos
@@ -19,7 +20,7 @@ identity traits. Changing one breaks running sites, so the tests pin each one.
 ## Use it
 
 ```bash
-go get github.com/UnlockedLabs/unlocked-contracts@v0.2.1
+go get github.com/UnlockedLabs/unlocked-contracts@v0.3.0
 ```
 
 ```go
@@ -116,6 +117,42 @@ if !on {
 - Only one call to core per facility runs at a time; other requests for that
   facility wait for its answer. A request whose context is canceled stops
   waiting, but the call goes on for everyone else (2-second timeout).
+
+### Ask Open Content
+
+Open Content runs as its own service (EN-205), so core asks it questions over
+HTTP. Both sides come from this package, so they always agree:
+
+```go
+import "github.com/UnlockedLabs/unlocked-contracts/opencontent"
+
+// core: one Client at startup, used wherever it needs an opencontent.OpenContent
+oc := opencontent.NewClient("http://open-content:8080", os.Getenv("OPEN_CONTENT_TOKEN"), nil)
+libraries, err := oc.TopLibraries(ctx, userID, facilityID)
+
+// Open Content: serve its answers (anything that implements OpenContent)
+mux.Handle("/internal/v1/open-content/", opencontent.NewHandler(answers, os.Getenv("OPEN_CONTENT_TOKEN")))
+```
+
+- Each question is a `POST /internal/v1/open-content/<question>` with its
+  arguments as JSON, answered in core's `{"message", "data"}` shape. The
+  ingress never routes `/internal`, so only the cluster can reach it.
+- Only core may ask: the Client sends the site's secret as a bearer token,
+  and the handler answers a missing or wrong one, or every request if it has
+  no token, with a 401. Core and Open Content get the same secret, such as
+  `OPEN_CONTENT_TOKEN`. The demo reset deletes activity at every facility, so
+  nothing else in the cluster should be able to call it.
+- Any answer but a 200 is an error, with Open Content's message. Arguments
+  that aren't valid JSON get a 400; an error from Open Content a 500, logged
+  with `slog`.
+- Each question times out after 10 seconds, the demo seed and reset after 5
+  minutes, and sooner if the caller's context ends.
+- `EndActivity` returns nothing: it logs a failure instead.
+
+To send a message to a user's open browser tabs, Open Content publishes an
+`opencontent.Notification` as JSON on `opencontent.NotifySubject`, and every
+core server forwards it over its websocket. It's plain NATS, so a message no
+server is listening for is dropped, like one for a user with no open tab.
 
 ## Develop
 
