@@ -2,6 +2,7 @@ package opencontent
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -14,11 +15,13 @@ const maxRequestBytes = 1 << 20
 // NewHandler serves oc's answers to core's questions, for Open Content to
 // mount on its server:
 //
-//	mux.Handle("/internal/v1/open-content/", opencontent.NewHandler(answers))
+//	mux.Handle("/internal/v1/open-content/", opencontent.NewHandler(answers, token))
 //
-// Arguments that aren't valid JSON get a 400, and an error from oc a 500 with
-// the error as the message, logged with slog.
-func NewHandler(oc OpenContent) http.Handler {
+// Only a request with token, the site's secret that core's Client also has,
+// is answered; any other gets a 401, and so does every request when token is
+// empty. Arguments that aren't valid JSON get a 400, and an error from oc a
+// 500 with the error as the message, logged with slog.
+func NewHandler(oc OpenContent, token string) http.Handler {
 	mux := http.NewServeMux()
 	handle(mux, pathEndActivity, func(ctx context.Context, req activityRequest) (any, error) {
 		oc.EndActivity(ctx, req.ActivityID)
@@ -63,7 +66,22 @@ func NewHandler(oc OpenContent) http.Handler {
 	handle(mux, pathSeedDemoActivity, func(ctx context.Context, req seedDemoRequest) (any, error) {
 		return nil, oc.SeedDemoActivity(ctx, req.FacilityID, req.UserIDs)
 	})
-	return mux
+	return requireToken(token, mux)
+}
+
+// requireToken passes on only the requests that carry token as a bearer
+// token. With an empty token it passes on none, so a site without its secret
+// fails closed.
+func requireToken(token string, next http.Handler) http.Handler {
+	want := []byte("Bearer " + token)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if token == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), want) != 1 {
+			slog.Warn("opencontent: refuse a question without the token", "path", r.URL.Path, "remote_addr", r.RemoteAddr)
+			writeJSON(w, http.StatusUnauthorized, envelope[any]{Message: "missing or wrong token"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // handle serves one question on path: it reads the arguments, asks answer,

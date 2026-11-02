@@ -23,20 +23,22 @@ const demoTimeout = 5 * time.Minute
 // for concurrent use.
 type Client struct {
 	baseURL string
+	token   string
 	client  *http.Client
 }
 
 var _ OpenContent = (*Client)(nil)
 
 // NewClient returns a Client that asks Open Content at baseURL, such as
-// "http://open-content:8080". A nil client means http.DefaultClient; each
+// "http://open-content:8080", sending token, the site's secret that Open
+// Content's handler also has. A nil client means http.DefaultClient; each
 // question times out after 10 seconds either way, the demo seed and reset
 // after 5 minutes.
-func NewClient(baseURL string, client *http.Client) *Client {
+func NewClient(baseURL, token string, client *http.Client) *Client {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &Client{baseURL: strings.TrimSuffix(baseURL, "/"), client: client}
+	return &Client{baseURL: strings.TrimSuffix(baseURL, "/"), token: token, client: client}
 }
 
 func (c *Client) EndActivity(ctx context.Context, activityID int64) {
@@ -114,6 +116,7 @@ func ask[Resp any](ctx context.Context, c *Client, path string, timeout time.Dur
 		return zero, fmt.Errorf("opencontent: build request for %s: %w", path, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return zero, fmt.Errorf("opencontent: ask %s: %w", path, err)

@@ -136,12 +136,22 @@ func (f *fakeOC) SeedDemoActivity(_ context.Context, facilityID uint, userIDs []
 	return f.err
 }
 
+// testToken is the site's secret in these tests.
+const testToken = "s3cret"
+
 // newPair serves fake with NewHandler and returns a Client that asks it.
 func newPair(t *testing.T, fake *fakeOC) *opencontent.Client {
 	t.Helper()
-	srv := httptest.NewServer(opencontent.NewHandler(fake))
+	srv := httptest.NewServer(opencontent.NewHandler(fake, testToken))
 	t.Cleanup(srv.Close)
-	return opencontent.NewClient(srv.URL+"/", nil)
+	return opencontent.NewClient(srv.URL+"/", testToken, nil)
+}
+
+// newRequest is a question to the handler, with the token.
+func newRequest(method, path, body string) *http.Request {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	return req
 }
 
 // question is one of core's questions: how to ask it, what Open Content
@@ -333,7 +343,7 @@ func TestEndActivityLogsFailure(t *testing.T) {
 		w.WriteHeader(http.StatusBadGateway)
 	}))
 	defer srv.Close()
-	opencontent.NewClient(srv.URL, nil).EndActivity(context.Background(), 99)
+	opencontent.NewClient(srv.URL, testToken, nil).EndActivity(context.Background(), 99)
 
 	if line := logs.String(); !strings.Contains(line, "activity_id=99") || !strings.Contains(line, "502") {
 		t.Errorf("log = %q, want the activity id and the 502", line)
@@ -360,7 +370,7 @@ func TestBadAnswers(t *testing.T) {
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer srv.Close()
-			_, err := opencontent.NewClient(srv.URL, nil).ResourcesAccessed(context.Background(), 12)
+			_, err := opencontent.NewClient(srv.URL, testToken, nil).ResourcesAccessed(context.Background(), 12)
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Errorf("err = %v, want it to mention %q", err, tc.wantErr)
 			}
@@ -371,7 +381,7 @@ func TestBadAnswers(t *testing.T) {
 func TestOpenContentUnreachable(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	srv.Close()
-	if _, err := opencontent.NewClient(srv.URL, nil).ResourcesAccessed(context.Background(), 12); err == nil {
+	if _, err := opencontent.NewClient(srv.URL, testToken, nil).ResourcesAccessed(context.Background(), 12); err == nil {
 		t.Error("err = nil, want an error when Open Content can't be reached")
 	}
 }
@@ -392,7 +402,7 @@ func TestCallerCancels(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	_, err := opencontent.NewClient(srv.URL, nil).ResourcesAccessed(ctx, 12)
+	_, err := opencontent.NewClient(srv.URL, testToken, nil).ResourcesAccessed(ctx, 12)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("err = %v, want context.DeadlineExceeded", err)
 	}
@@ -458,8 +468,8 @@ func TestWire(t *testing.T) {
 		t.Run(tc.path, func(t *testing.T) {
 			fake := &fakeOC{usage: usage}
 			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodPost, "/internal/v1/open-content/"+tc.path, strings.NewReader(tc.body))
-			opencontent.NewHandler(fake).ServeHTTP(rec, req)
+			req := newRequest(http.MethodPost, "/internal/v1/open-content/"+tc.path, tc.body)
+			opencontent.NewHandler(fake, testToken).ServeHTTP(rec, req)
 
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body)
@@ -494,7 +504,7 @@ func TestHandlerRejects(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := &fakeOC{}
 			rec := httptest.NewRecorder()
-			opencontent.NewHandler(fake).ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body)))
+			opencontent.NewHandler(fake, testToken).ServeHTTP(rec, newRequest(tc.method, tc.path, tc.body))
 			if rec.Code != tc.wantStatus {
 				t.Errorf("status = %d, want %d", rec.Code, tc.wantStatus)
 			}
@@ -510,6 +520,59 @@ func TestHandlerRejects(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Only core, with the site's secret, gets answers: a missing or wrong token
+// gets a 401 and Open Content isn't asked, and a handler with no token
+// refuses everyone.
+func TestHandlerToken(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		handlerToken  string
+		authorization string
+		wantStatus    int
+	}{
+		{"right token", testToken, "Bearer " + testToken, http.StatusOK},
+		{"no token", testToken, "", http.StatusUnauthorized},
+		{"wrong token", testToken, "Bearer guess", http.StatusUnauthorized},
+		{"token without Bearer", testToken, testToken, http.StatusUnauthorized},
+		{"handler without a token", "", "Bearer ", http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeOC{}
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/internal/v1/open-content/reset-demo-activity", strings.NewReader(`{"before":"2026-09-01T00:00:00Z"}`))
+			if tc.authorization != "" {
+				req.Header.Set("Authorization", tc.authorization)
+			}
+			opencontent.NewHandler(fake, tc.handlerToken).ServeHTTP(rec, req)
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body %s", rec.Code, tc.wantStatus, rec.Body)
+			}
+			method, _ := fake.asked()
+			if tc.wantStatus == http.StatusOK && method != "ResetDemoActivity" {
+				t.Errorf("Open Content was asked %q, want ResetDemoActivity", method)
+			}
+			if tc.wantStatus != http.StatusOK {
+				if method != "" {
+					t.Errorf("Open Content was asked %s, want nothing", method)
+				}
+				if got := strings.TrimSpace(rec.Body.String()); got != `{"message":"missing or wrong token","data":null}` {
+					t.Errorf("body = %s, want core's JSON error", got)
+				}
+			}
+		})
+	}
+}
+
+// A Client with the wrong token gets Open Content's 401 as an error.
+func TestClientWrongToken(t *testing.T) {
+	srv := httptest.NewServer(opencontent.NewHandler(&fakeOC{}, testToken))
+	t.Cleanup(srv.Close)
+	_, err := opencontent.NewClient(srv.URL, "guess", nil).ResourcesAccessed(context.Background(), 12)
+	if err == nil || !strings.Contains(err.Error(), "401") || !strings.Contains(err.Error(), "missing or wrong token") {
+		t.Errorf("err = %v, want the 401 with its message", err)
 	}
 }
 
