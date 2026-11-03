@@ -236,6 +236,13 @@ live := coreapi.NewLiveProvidersClient("http://server:8080", token, nil)
 mux.Handle("/internal/v1/core/", coreapi.NewHandler(coreUsers, corePrograms, token))
 ```
 
+Core's proxy sends the service token as
+`Authorization: Bearer <token>` and the caller's claims in the
+`identity.ClaimsHeader` (`X-Identity-Claims`) header. Core writes it with
+`identity.SetClaimsHeader(req, claims)`, and the service reads it with
+`identity.ClaimsFromRequest(req)`, which returns false when it is missing or
+not JSON.
+
 - Each question is a `POST /internal/v1/provider-platforms/<question>` (or
   `/internal/v1/core/users/<method>`, `/internal/v1/core/live-providers/<method>`)
   with its arguments as JSON, answered in core's `{"message", "data"}` shape.
