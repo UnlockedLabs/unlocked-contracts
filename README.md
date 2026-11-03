@@ -240,8 +240,8 @@ mux.Handle("/internal/v1/core/", coreapi.NewHandler(coreUsers, corePrograms, tok
   `/internal/v1/core/users/<method>`, `/internal/v1/core/live-providers/<method>`)
   with its arguments as JSON, answered in core's `{"message", "data"}` shape.
   The ingress never routes `/internal`, so only the cluster can reach it.
-- **The service token:** every call carries the shared secret in the
-  `X-Service-Token` header, and every handler compares it in constant time. A
+- **The service token:** every call carries the shared secret as
+  `Authorization: Bearer <token>`, and every handler compares it in constant time. A
   missing or wrong token gets a 401; a handler given an empty token rejects
   everything.
 - Any answer but a 200 is an error, with the service's message. Arguments that

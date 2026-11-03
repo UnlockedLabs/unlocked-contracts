@@ -67,7 +67,7 @@ func Ask[Resp any](ctx context.Context, c *Client, path string, timeout time.Dur
 		return zero, fmt.Errorf("%s: build request for %s: %w", c.pkg, path, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(TokenHeader, c.token)
+	SetToken(req, c.token)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return zero, fmt.Errorf("%s: ask %s: %w", c.pkg, path, err)

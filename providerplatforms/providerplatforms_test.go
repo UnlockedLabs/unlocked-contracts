@@ -281,7 +281,7 @@ func TestRejectsBadToken(t *testing.T) {
 func TestBadArguments(t *testing.T) {
 	_, _, url := start(t)
 	req, _ := http.NewRequest(http.MethodPost, url+"/internal/v1/provider-platforms/provider", strings.NewReader(`{`))
-	req.Header.Set("X-Service-Token", token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -297,7 +297,7 @@ func TestWire(t *testing.T) {
 	var gotPath, gotToken, gotBody string
 	rec := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
-		gotPath, gotToken, gotBody = r.URL.Path, r.Header.Get("X-Service-Token"), string(b)
+		gotPath, gotToken, gotBody = r.URL.Path, r.Header.Get("Authorization"), string(b)
 		_, _ = io.WriteString(w, `{"message":"","data":null}`)
 	}))
 	defer rec.Close()
@@ -308,12 +308,12 @@ func TestWire(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			_, _ = tt.do(context.Background(), recorder)
 			wantPath := "/internal/v1/provider-platforms/" + tt.path
-			if gotPath != wantPath || strings.TrimSpace(gotBody) != tt.body || gotToken != token {
-				t.Errorf("sent %s %q token %q, want %s %q token %q", gotPath, gotBody, gotToken, wantPath, tt.body, token)
+			if gotPath != wantPath || strings.TrimSpace(gotBody) != tt.body || gotToken != "Bearer "+token {
+				t.Errorf("sent %s %q token %q, want %s %q token %q", gotPath, gotBody, gotToken, wantPath, tt.body, "Bearer "+token)
 			}
 
 			req, _ := http.NewRequest(http.MethodPost, url+wantPath, strings.NewReader(tt.body))
-			req.Header.Set("X-Service-Token", token)
+			req.Header.Set("Authorization", "Bearer "+token)
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				t.Fatal(err)

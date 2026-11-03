@@ -9,16 +9,19 @@ import (
 	"net/http"
 )
 
-// TokenHeader carries the shared service token on every internal call.
-const TokenHeader = "X-Service-Token"
+// SetToken puts the shared service token on req as a bearer token, the scheme
+// every internal call uses.
+func SetToken(req *http.Request, token string) {
+	req.Header.Set("Authorization", "Bearer "+token)
+}
 
-// RequireToken serves next only to requests that carry token, and answers 401
+// RequireToken serves next only to requests that carry token as a bearer token, and answers 401
 // to the rest. An empty token rejects every request, so a service started
 // without one fails closed.
 func RequireToken(token string, next http.Handler) http.Handler {
-	want := sha256.Sum256([]byte(token))
+	want := sha256.Sum256([]byte("Bearer " + token))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got := sha256.Sum256([]byte(r.Header.Get(TokenHeader)))
+		got := sha256.Sum256([]byte(r.Header.Get("Authorization")))
 		if token == "" || subtle.ConstantTimeCompare(got[:], want[:]) != 1 {
 			WriteJSON(w, http.StatusUnauthorized, Envelope[any]{Message: "invalid service token"})
 			return

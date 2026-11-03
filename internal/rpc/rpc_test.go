@@ -16,18 +16,19 @@ func TestRequireToken(t *testing.T) {
 		header *string
 		status int
 	}{
-		{"right token", "s3cret", ptr("s3cret"), http.StatusNoContent},
+		{"right token", "s3cret", ptr("Bearer s3cret"), http.StatusNoContent},
+		{"token without Bearer", "s3cret", ptr("s3cret"), http.StatusUnauthorized},
 		{"missing header", "s3cret", nil, http.StatusUnauthorized},
-		{"wrong token", "s3cret", ptr("other"), http.StatusUnauthorized},
-		{"longer token", "s3cret", ptr("s3cret-and-more"), http.StatusUnauthorized},
-		{"empty token configured, empty sent", "", ptr(""), http.StatusUnauthorized},
+		{"wrong token", "s3cret", ptr("Bearer other"), http.StatusUnauthorized},
+		{"longer token", "s3cret", ptr("Bearer s3cret-and-more"), http.StatusUnauthorized},
+		{"empty token configured, empty sent", "", ptr("Bearer "), http.StatusUnauthorized},
 		{"empty token configured, none sent", "", nil, http.StatusUnauthorized},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/x", nil)
 			if tt.header != nil {
-				req.Header.Set(rpc.TokenHeader, *tt.header)
+				req.Header.Set("Authorization", *tt.header)
 			}
 			rec := httptest.NewRecorder()
 			rpc.RequireToken(tt.want, next).ServeHTTP(rec, req)

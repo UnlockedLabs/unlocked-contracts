@@ -190,7 +190,7 @@ func TestWire(t *testing.T) {
 	var gotPath, gotToken, gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
-		gotPath, gotToken, gotBody = r.URL.Path, r.Header.Get("X-Service-Token"), string(b)
+		gotPath, gotToken, gotBody = r.URL.Path, r.Header.Get("Authorization"), string(b)
 		_, _ = io.WriteString(w, `{"message":"","data":null}`)
 	}))
 	defer srv.Close()
@@ -215,8 +215,8 @@ func TestWire(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.call()
-			if gotPath != tt.path || gotBody != strings.TrimSpace(tt.body) || gotToken != token {
-				t.Errorf("sent %s %q token %q, want %s %q token %q", gotPath, gotBody, gotToken, tt.path, tt.body, token)
+			if gotPath != tt.path || gotBody != strings.TrimSpace(tt.body) || gotToken != "Bearer "+token {
+				t.Errorf("sent %s %q token %q, want %s %q token %q", gotPath, gotBody, gotToken, tt.path, tt.body, "Bearer "+token)
 			}
 		})
 	}
@@ -225,7 +225,7 @@ func TestWire(t *testing.T) {
 		f := &fake{ok: true}
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/internal/v1/core/users/get", strings.NewReader(`{"id":7}`))
-		req.Header.Set("X-Service-Token", token)
+		req.Header.Set("Authorization", "Bearer "+token)
 		coreapi.NewHandler(f, f, token).ServeHTTP(rec, req)
 		want := `{"message":"","data":{"id":7,"username":"jdoe","name_first":"Jane","name_last":"Doe","email":"j@x.org","facility_id":3}}`
 		if got := strings.TrimSpace(rec.Body.String()); got != want {
@@ -234,7 +234,7 @@ func TestWire(t *testing.T) {
 
 		rec = httptest.NewRecorder()
 		req = httptest.NewRequest(http.MethodPost, "/internal/v1/core/live-providers/users", strings.NewReader(`{"provider_id":2}`))
-		req.Header.Set("X-Service-Token", token)
+		req.Header.Set("Authorization", "Bearer "+token)
 		coreapi.NewHandler(f, f, token).ServeHTTP(rec, req)
 		want = `{"message":"","data":{"users":[{"username":"jdoe","name_first":"Jane","name_last":"Doe","email":"j@x.org","external_user_id":"e1","external_username":"jd"}],"ok":true}}`
 		if got := strings.TrimSpace(rec.Body.String()); got != want {
