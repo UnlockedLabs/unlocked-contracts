@@ -1,8 +1,11 @@
 package rpc_test
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/UnlockedLabs/unlocked-contracts/internal/rpc"
@@ -36,6 +39,24 @@ func TestRequireToken(t *testing.T) {
 				t.Fatalf("status = %d, want %d", rec.Code, tt.status)
 			}
 		})
+	}
+}
+
+// The 401 body and the logged refusal are what Open Content's handler has
+// answered since EN-205, so they must not change.
+func TestRequireTokenRefusal(t *testing.T) {
+	var logs bytes.Buffer
+	defer slog.SetDefault(slog.Default())
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+
+	rec := httptest.NewRecorder()
+	rpc.RequireToken("s3cret", http.NotFoundHandler()).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/x", nil))
+
+	if got := strings.TrimSpace(rec.Body.String()); got != `{"message":"missing or wrong token","data":null}` {
+		t.Errorf("body = %s, want the missing or wrong token message", got)
+	}
+	if line := logs.String(); !strings.Contains(line, "path=/x") {
+		t.Errorf("log = %q, want the refusal logged with its path", line)
 	}
 }
 

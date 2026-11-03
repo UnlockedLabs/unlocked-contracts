@@ -48,10 +48,3 @@ type (
 		UserIDs    []uint `json:"user_ids"`
 	}
 )
-
-// envelope is every answer, in core's JSON shape: the answer in data, or
-// what went wrong in message.
-type envelope[T any] struct {
-	Message string `json:"message"`
-	Data    T      `json:"data"`
-}

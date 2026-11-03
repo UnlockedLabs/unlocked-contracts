@@ -6,6 +6,7 @@ package rpc
 import (
 	"crypto/sha256"
 	"crypto/subtle"
+	"log/slog"
 	"net/http"
 )
 
@@ -23,7 +24,8 @@ func RequireToken(token string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got := sha256.Sum256([]byte(r.Header.Get("Authorization")))
 		if token == "" || subtle.ConstantTimeCompare(got[:], want[:]) != 1 {
-			WriteJSON(w, http.StatusUnauthorized, Envelope[any]{Message: "invalid service token"})
+			slog.Warn("rpc: refuse a call without the service token", "path", r.URL.Path, "remote_addr", r.RemoteAddr)
+			WriteJSON(w, http.StatusUnauthorized, Envelope[any]{Message: "missing or wrong token"})
 			return
 		}
 		next.ServeHTTP(w, r)
