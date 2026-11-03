@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -12,11 +13,12 @@ import (
 
 // Feature is a feature a product registers with core.
 type Feature struct {
-	// Name is permanent: lowercase letters, digits and underscores, starting
-	// with a letter, up to 64 characters.
+	// Name is permanent and must not be used by any other product or by core:
+	// lowercase letters, digits and underscores, starting with a letter, up to
+	// 64 characters.
 	Name Access
 	// Title and Description are what Feature Control shows. Title is required,
-	// up to 100 characters.
+	// up to 100 characters; Description is up to 500.
 	Title       string
 	Description string
 }
@@ -30,6 +32,11 @@ type Feature struct {
 // such as "http://server:8080". A nil client means http.DefaultClient; the call
 // times out after 2 seconds either way.
 func Register(ctx context.Context, coreURL string, client *http.Client, f Feature) error {
+	// An empty name would send PUT .../features/, which core's router answers
+	// with a 404 that reads like an old core.
+	if f.Name == "" {
+		return errors.New("features: register: name is required")
+	}
 	if client == nil {
 		client = http.DefaultClient
 	}
@@ -43,7 +50,7 @@ func Register(ctx context.Context, coreURL string, client *http.Client, f Featur
 	if err != nil {
 		return fmt.Errorf("features: register %s: %w", f.Name, err)
 	}
-	target := strings.TrimSuffix(coreURL, "/") + checkPath + "/" + url.PathEscape(string(f.Name))
+	target := strings.TrimSuffix(coreURL, "/") + featuresPath + "/" + url.PathEscape(string(f.Name))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, target, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("features: register %s: build request: %w", f.Name, err)
@@ -55,7 +62,8 @@ func Register(ctx context.Context, coreURL string, client *http.Client, f Featur
 		return fmt.Errorf("features: register %s: %w", f.Name, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+	// Core answers 201 for a new feature and 200 for one it already had.
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
 	}
 

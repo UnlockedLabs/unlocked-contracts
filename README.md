@@ -123,10 +123,11 @@ if !on {
 A product gets its own on/off switch in Feature Control by registering it at
 startup. No core change, migration or frontend release is needed.
 
-1. **Pick a name, a title and a description.** The name is permanent:
-   lowercase letters, digits and underscores, starting with a letter, up to 64
-   characters. The title (up to 100 characters) and description are what
-   Feature Control shows, and can change later.
+1. **Pick a name, a title and a description.** The name is permanent and must
+   not be used by any other product: lowercase letters, digits and
+   underscores, starting with a letter, up to 64 characters. The title (up to
+   100 characters) and description (up to 500) are what Feature Control shows,
+   and can change later.
 2. **Declare the name** in your product:
 
    ```go
@@ -157,9 +158,15 @@ startup. No core change, migration or frontend release is needed.
   description. It never turns the feature on or changes any facility.
 - A failed registration can't turn anything on: until it succeeds, the feature
   isn't in core's list, so every check reads it as off.
-- A bad name or a missing title is an error carrying core's message. So is a
-  core older than EN-257, which answers 404.
+- A bad name, a missing title or a description that's too long is an error
+  carrying core's message. An empty name is an error before core is asked.
+- A 404 means core is older than EN-257 and doesn't have the endpoint yet.
+- Core's own features (`features.All`) can't be registered, so a product can't
+  rename them: core answers 409.
 - Only top-level features can be registered, not sub-features.
+- With one attempt per start, a product that starts before core (after a
+  whole site restarts) is restarted by Kubernetes with growing delays, up to
+  5 minutes apart, until core answers.
 - **To remove a feature** (rare), delete its row; its facility settings go with
   it: `DELETE FROM feature_flags WHERE name = 'my_tool';`. Stop registering it
   first, or the next restart adds it back.

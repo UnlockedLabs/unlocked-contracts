@@ -23,6 +23,7 @@ func TestRegister(t *testing.T) {
 	}{
 		{name: "new feature", status: http.StatusCreated, reply: `{"message":"feature registered","data":{}}`},
 		{name: "already registered", status: http.StatusOK, reply: `{"message":"feature registered","data":{}}`},
+		{name: "any 2xx", status: http.StatusNoContent},
 		{
 			name:    "bad name carries core's message",
 			status:  http.StatusBadRequest,
@@ -30,10 +31,10 @@ func TestRegister(t *testing.T) {
 			wantErr: "core answered 400 Bad Request: feature name must start with a letter",
 		},
 		{
-			name:    "sub-feature name",
+			name:    "core feature name",
 			status:  http.StatusConflict,
-			reply:   `{"message":"a sub-feature can't be registered","data":null}`,
-			wantErr: "core answered 409 Conflict: a sub-feature can't be registered",
+			reply:   `{"message":"a core feature can't be registered","data":null}`,
+			wantErr: "core answered 409 Conflict: a core feature can't be registered",
 		},
 		{
 			name:    "core error",
@@ -93,6 +94,22 @@ func TestRegisterCoreUnreachable(t *testing.T) {
 	}
 }
 
+func TestRegisterEmptyName(t *testing.T) {
+	var called bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	}))
+	defer srv.Close()
+
+	err := Register(context.Background(), srv.URL, nil, Feature{Title: "My Tool"})
+	if err == nil || err.Error() != "features: register: name is required" {
+		t.Fatalf("err = %v, want name is required", err)
+	}
+	if called {
+		t.Fatal("core was called with an empty name")
+	}
+}
+
 func TestRegisterBadURL(t *testing.T) {
 	err := Register(context.Background(), "http://bad host", nil, Feature{Name: "my_tool", Title: "My Tool"})
 	if err == nil || !strings.Contains(err.Error(), "build request") {
@@ -113,7 +130,7 @@ func TestRegisterTimesOut(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
 	}
-	if elapsed := time.Since(start); elapsed > callTimeout+time.Second {
+	if elapsed := time.Since(start); elapsed < callTimeout || elapsed > callTimeout+time.Second {
 		t.Fatalf("took %s, want about %s", elapsed, callTimeout)
 	}
 }
