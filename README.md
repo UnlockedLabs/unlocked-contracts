@@ -22,7 +22,7 @@ identity traits. Changing one breaks running sites, so the tests pin each one.
 ## Use it
 
 ```bash
-go get github.com/UnlockedLabs/unlocked-contracts@v0.3.1
+go get github.com/UnlockedLabs/unlocked-contracts@v0.4.0
 ```
 
 ```go
@@ -240,6 +240,11 @@ mux.Handle("/internal/v1/core/", coreapi.NewHandler(coreUsers, corePrograms, tok
   `/internal/v1/core/users/<method>`, `/internal/v1/core/live-providers/<method>`)
   with its arguments as JSON, answered in core's `{"message", "data"}` shape.
   The ingress never routes `/internal`, so only the cluster can reach it.
+- **Routes:** `providerplatforms.Routes` lists the 30 `/api` routes Provider
+  Platforms serves, each with its method and pattern, access (`Admin` or
+  `AnyUser`), the path value that must be the caller unless they are an admin
+  (`UserParam`), and its feature flag. Core's proxy enforces it; the service's
+  route test checks its mux against it.
 - **The service token:** every call carries the shared secret as
   `Authorization: Bearer <token>`, and every handler compares it in constant time. A
   missing or wrong token gets a 401; a handler given an empty token rejects
