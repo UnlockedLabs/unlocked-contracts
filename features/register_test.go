@@ -110,6 +110,26 @@ func TestRegisterEmptyName(t *testing.T) {
 	}
 }
 
+func TestRegisterRedirect(t *testing.T) {
+	var followed bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ok" {
+			followed = true
+			return
+		}
+		http.Redirect(w, r, "/ok", http.StatusMovedPermanently)
+	}))
+	defer srv.Close()
+
+	err := Register(context.Background(), srv.URL, nil, Feature{Name: "my_tool", Title: "My Tool"})
+	if err == nil || !strings.Contains(err.Error(), "core answered 301") {
+		t.Fatalf("err = %v, want core answered 301", err)
+	}
+	if followed {
+		t.Fatal("the redirect was followed")
+	}
+}
+
 func TestRegisterBadURL(t *testing.T) {
 	err := Register(context.Background(), "http://bad host", nil, Feature{Name: "my_tool", Title: "My Tool"})
 	if err == nil || !strings.Contains(err.Error(), "build request") {

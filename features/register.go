@@ -40,6 +40,10 @@ func Register(ctx context.Context, coreURL string, client *http.Client, f Featur
 	if client == nil {
 		client = http.DefaultClient
 	}
+	// A followed redirect resends the PUT as a GET, so core never sees it and
+	// a 2xx at the end would read as registered. Stop at the redirect instead.
+	noRedirects := *client
+	noRedirects.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	ctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
 
@@ -57,7 +61,7 @@ func Register(ctx context.Context, coreURL string, client *http.Client, f Featur
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(req)
+	resp, err := noRedirects.Do(req)
 	if err != nil {
 		return fmt.Errorf("features: register %s: %w", f.Name, err)
 	}
