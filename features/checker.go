@@ -14,9 +14,10 @@ import (
 // change in Feature Control reaches every module within this time.
 const CacheTTL = 30 * time.Second
 
-// checkPath is core's feature-check endpoint (EN-188). Only reachable from
+// featuresPath is core's features endpoint: Checker asks it what is on
+// (EN-188), and Register adds a feature under it (EN-257). Only reachable from
 // inside the cluster.
-const checkPath = "/internal/v1/features"
+const featuresPath = "/internal/v1/features"
 
 // callTimeout bounds every call to core, whatever client the Checker was given.
 const callTimeout = 2 * time.Second
@@ -119,7 +120,7 @@ func (c *Checker) refresh(facilityID uint, cl *call) {
 }
 
 func (c *Checker) fetch(ctx context.Context, facilityID uint) (map[Access]bool, error) {
-	url := fmt.Sprintf("%s%s?facility_id=%d", c.baseURL, checkPath, facilityID)
+	url := fmt.Sprintf("%s%s?facility_id=%d", c.baseURL, featuresPath, facilityID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("features: build request for facility %d: %w", facilityID, err)

@@ -48,7 +48,7 @@ func (f *fakeCore) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	reply := f.reply
 	f.mu.Unlock()
-	if r.URL.Path != checkPath || r.URL.Query().Get("facility_id") != fmt.Sprint(facility) {
+	if r.URL.Path != featuresPath || r.URL.Query().Get("facility_id") != fmt.Sprint(facility) {
 		http.Error(w, "unexpected request "+r.URL.String(), http.StatusTeapot)
 		return
 	}

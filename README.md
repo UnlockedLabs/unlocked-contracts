@@ -8,7 +8,7 @@ things, with no dependencies outside the standard library.
 
 | Package | What it holds |
 |---|---|
-| `features` | Feature-flag names (`features.OpenContent`, …), `features.All`, and `features.Checker`, which asks core whether a feature is on at a facility |
+| `features` | Feature-flag names (`features.OpenContent`, …), `features.All`, `features.Register`, which adds a product's own feature, and `features.Checker`, which asks core whether a feature is on at a facility |
 | `identity` | `identity.Claims`, who is logged in, how to read them from a request's context, and `identity.SessionChecker`, which checks the login for a product service |
 | `jobs` | Job names (`jobs.GetCourses`, …) and each job's NATS subject (`PubName()`) |
 | `opencontent` | What core asks Open Content: the `OpenContent` interface and its types, `opencontent.Client` (core's side) and `opencontent.NewHandler` (Open Content's side), and the `Notification` Open Content sends to core's websocket |
@@ -20,7 +20,7 @@ identity traits. Changing one breaks running sites, so the tests pin each one.
 ## Use it
 
 ```bash
-go get github.com/UnlockedLabs/unlocked-contracts@v0.3.0
+go get github.com/UnlockedLabs/unlocked-contracts@v0.3.1
 ```
 
 ```go
@@ -117,6 +117,59 @@ if !on {
 - Only one call to core per facility runs at a time; other requests for that
   facility wait for its answer. A request whose context is canceled stops
   waiting, but the call goes on for everyone else (2-second timeout).
+
+### Add a feature
+
+A product gets its own on/off switch in Feature Control by registering it at
+startup. No core change, migration or frontend release is needed.
+
+1. **Pick a name, a title and a description.** The name is permanent and must
+   not be used by any other product: lowercase letters, digits and
+   underscores, starting with a letter, up to 64 characters. The title (up to
+   100 characters) and description (up to 500) are what Feature Control shows,
+   and can change later.
+2. **Declare the name** in your product:
+
+   ```go
+   const MyTool features.Access = "my_tool"
+   ```
+
+3. **Register it at startup, before serving, and fail startup if it errors:**
+
+   ```go
+   err := features.Register(ctx, "http://server:8080", nil, features.Feature{
+   	Name:        MyTool,
+   	Title:       "My Tool",
+   	Description: "What My Tool does for residents",
+   })
+   if err != nil {
+   	log.Fatal(err) // Kubernetes restarts the product until core answers
+   }
+   ```
+
+4. **Gate the product** with a `Checker` (see [Check a feature](#check-a-feature)):
+   `checker.Enabled(ctx, facilityID, MyTool)`.
+5. **Deploy.** The feature shows up in Feature Control, off at every facility.
+6. **Turn it on** per facility in Feature Control.
+
+- `Register` calls core's `PUT /internal/v1/features/{name}`, which is only
+  reachable inside the cluster. It makes one attempt, with a 2-second timeout.
+- Registering again on every restart is safe: it only updates the title and
+  description. It never turns the feature on or changes any facility.
+- A failed registration can't turn anything on: until it succeeds, the feature
+  isn't in core's list, so every check reads it as off.
+- A bad name, a missing title or a description that's too long is an error
+  carrying core's message. An empty name is an error before core is asked.
+- A 404 means core is older than EN-257 and doesn't have the endpoint yet.
+- Core's own features (`features.All`) can't be registered, so a product can't
+  rename them: core answers 409.
+- Only top-level features can be registered, not sub-features.
+- With one attempt per start, a product that starts before core (after a
+  whole site restarts) is restarted by Kubernetes with growing delays, up to
+  5 minutes apart, until core answers.
+- **To remove a feature** (rare), delete its row; its facility settings go with
+  it: `DELETE FROM feature_flags WHERE name = 'my_tool';`. Stop registering it
+  first, or the next restart adds it back.
 
 ### Ask Open Content
 

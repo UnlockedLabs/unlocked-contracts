@@ -22,7 +22,8 @@ const (
 	ResidentPrograms Access = "resident_programs"
 )
 
-// All lists every feature.
+// All lists every feature core ships. A feature a product registers isn't
+// here.
 var All = []Access{
 	OpenContent, ProviderPlatforms, ProgramManagement, LearningRecord, AITutor,
 	RequestContent, HelpfulLinks, UploadVideo, ResidentPrograms,
