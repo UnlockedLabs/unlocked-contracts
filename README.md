@@ -10,7 +10,7 @@ things, with no dependencies outside the standard library.
 |---|---|
 | `coreapi` | What a product service asks core: `coreapi.Users` and `coreapi.LiveProviders`, their types, an HTTP client for each and `coreapi.NewHandler` (core's side) |
 | `features` | Feature-flag names (`features.OpenContent`, …), `features.All`, `features.Register`, which adds a product's own feature, and `features.Checker`, which asks core whether a feature is on at a facility |
-| `identity` | `identity.Claims`, who is logged in, how to read them from a request's context, and `identity.SessionChecker`, which checks the login for a product service |
+| `identity` | `identity.Claims`, who is logged in, how to read them from a request's context, `identity.SessionChecker`, which checks the login for a product service, and `identity.RequireServiceToken`, which lets only callers with the service token through |
 | `jobs` | Job names (`jobs.GetCourses`, …) and each job's NATS subject (`PubName()`) |
 | `opencontent` | What core asks Open Content: the `OpenContent` interface and its types, `opencontent.Client` (core's side) and `opencontent.NewHandler` (Open Content's side), and the `Notification` Open Content sends to core's websocket |
 | `providerplatforms` | What core asks Provider Platforms: the `ProviderPlatforms` interface and its types, `providerplatforms.Client` (core's side) and `providerplatforms.NewHandler` (Provider Platforms' side) |
