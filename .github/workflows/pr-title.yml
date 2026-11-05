@@ -1,0 +1,28 @@
+# Squash and merge lands a multi-commit PR on main under its title, so the
+# title must be a conventional commit too (the "conventional commits" job in
+# ci.yml checks the commits). Same check as unlocked-core, unlocked-platform
+# and unlocked-hiset-ai.
+name: pr title
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  title:
+    name: pr title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the PR title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          pattern='^(feat|fix|chore|docs|refactor|test|ci|build|perf|revert|style)(\([a-z0-9._/-]+\))?!?: .+'
+          if ! printf '%s' "$TITLE" | grep -Eq "$pattern"; then
+            echo "::error::PR title is not a conventional commit: $TITLE"
+            exit 1
+          fi
