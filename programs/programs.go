@@ -1,5 +1,6 @@
-// Package programs is what core asks Programs, which runs as its own service
-// (EN-207): the Programs interface and its types.
+// Package programs is what core asks Programs, which runs as its own service:
+// the Programs interface and its types, a Client that core uses to ask over
+// HTTP, and a Handler that Programs serves the answers with.
 //
 // The JSON names match what core sends its browsers, so core can pass the
 // answers on unchanged.
@@ -69,13 +70,13 @@ type ResidentTransferProgramConflicts struct {
 // FacilityPrograms counts the Programs rows recorded at a facility.
 type FacilityPrograms struct {
 	// ActivePrograms and ActiveClasses are the facility list's numbers.
-	ActivePrograms int64
-	ActiveClasses  int64
+	ActivePrograms int64 `json:"active_programs"`
+	ActiveClasses  int64 `json:"active_classes"`
 	// Classes, Programs (the programs the facility offers) and Rooms block
 	// deleting the facility.
-	Classes  int64
-	Programs int64
-	Rooms    int64
+	Classes  int64 `json:"classes"`
+	Programs int64 `json:"programs"`
+	Rooms    int64 `json:"rooms"`
 }
 
 // ResidentProgramClassInfo is one of a resident's enrollments.
