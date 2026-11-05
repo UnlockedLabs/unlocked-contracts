@@ -2,9 +2,11 @@ package programs
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/UnlockedLabs/unlocked-contracts/coreapi"
 	"github.com/UnlockedLabs/unlocked-contracts/internal/rpc"
 )
 
@@ -84,4 +86,16 @@ func (c *Client) ClassMetrics(ctx context.Context, facilityID *uint) (ClassDashb
 
 func (c *Client) FacilityHealth(ctx context.Context, facilityID *uint, days int, tz string) ([]FacilityHealthSummary, error) {
 	return rpc.Ask[[]FacilityHealthSummary](ctx, c.c, pathFacilityHealth, rpc.CallTimeout, healthRequest{FacilityID: facilityID, Days: days, TZ: tz})
+}
+
+func (c *Client) LiveUsers(ctx context.Context, providerID uint) ([]coreapi.ProviderUser, bool, error) {
+	a, err := rpc.Ask[liveUsersAnswer](ctx, c.c, pathLiveUsers, rpc.CallTimeout, providerRequest{ProviderID: providerID})
+	return a.Users, a.OK, err
+}
+
+func (c *Client) MappingsChanged(providerID, userID uint) {
+	_, err := rpc.Ask[any](context.Background(), c.c, pathMappingsChanged, rpc.CallTimeout, mappingsRequest{ProviderID: providerID, UserID: userID})
+	if err != nil {
+		slog.Error("programs: mappings changed", "provider_id", providerID, "user_id", userID, "err", err)
+	}
 }

@@ -9,10 +9,13 @@ package programs
 import (
 	"context"
 	"time"
+
+	"github.com/UnlockedLabs/unlocked-contracts/coreapi"
 )
 
 // Programs answers core's questions about classes, enrollments and the
-// Programs numbers on the dashboard.
+// Programs numbers on the dashboard, and the live LMS data core passes on to
+// Provider Platforms as coreapi.LiveProviders.
 type Programs interface {
 	// EnrolledUserIDs is the users enrolled in a class right now.
 	EnrolledUserIDs(ctx context.Context, classID uint) ([]uint, error)
@@ -58,6 +61,15 @@ type Programs interface {
 	// FacilityHealth counts the missing attendance over the last days (3 when
 	// days isn't positive), with class times read in the time zone tz.
 	FacilityHealth(ctx context.Context, facilityID *uint, days int, tz string) ([]FacilityHealthSummary, error)
+
+	// LiveUsers is every user a provider's own API lists. ok is false for a
+	// provider that can't list them; its users come from Provider Platforms'
+	// worker.
+	LiveUsers(ctx context.Context, providerID uint) (users []coreapi.ProviderUser, ok bool, err error)
+	// MappingsChanged tells Programs that a user's account at a provider was
+	// linked or unlinked, so it can clear its cached Canvas programs. It logs
+	// a failure instead of returning it.
+	MappingsChanged(providerID, userID uint)
 }
 
 // ResidentTransferProgramConflicts is a class a resident would leave behind by

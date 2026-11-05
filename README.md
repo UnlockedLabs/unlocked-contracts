@@ -238,6 +238,10 @@ mux.Handle("/internal/v1/programs/", programs.NewHandler(answers, token))
   ends.
 - `EndEnrollmentsForTransfer` and `WithdrawEnrollments` change nothing when
   called again, so core can retry them.
+- Programs also holds the Canvas and Essential Education code behind
+  `coreapi.LiveProviders`. Provider Platforms still asks core for it, and core
+  answers with `LiveUsers` and `MappingsChanged`, which logs a failure instead
+  of returning it.
 
 ### Ask Provider Platforms, and let it ask core
 

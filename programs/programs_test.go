@@ -1,10 +1,12 @@
 package programs_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -13,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/UnlockedLabs/unlocked-contracts/coreapi"
 	"github.com/UnlockedLabs/unlocked-contracts/programs"
 )
 
@@ -51,7 +54,16 @@ var (
 	health  = []programs.FacilityHealthSummary{{
 		FacilityID: 3, FacilityName: "BCF", Programs: 3, ActiveClasses: 5, Enrollment: 40, MissingAttendance: 2, AttendanceConcerns: 1,
 	}}
+	providerUsers = []coreapi.ProviderUser{{
+		Username: "jdoe", NameFirst: "Jane", NameLast: "Doe", Email: "jdoe@x", ExternalUserID: "42", ExternalUsername: "jane.doe",
+	}}
 )
+
+// liveUsers is what LiveUsers returns, as one value to compare.
+type liveUsers struct {
+	Users []coreapi.ProviderUser
+	OK    bool
+}
 
 // fakePrograms records the last question it was asked and gives the answers
 // above, or err when it's set.
@@ -62,6 +74,8 @@ type fakePrograms struct {
 	err    error
 	// userIDs is what EnrolledUserIDs and EligibleUserIDs answer.
 	userIDs []uint
+	// listsUsers is LiveUsers' ok: whether the provider lists its users.
+	listsUsers bool
 }
 
 var _ programs.Programs = (*fakePrograms)(nil)
@@ -151,6 +165,18 @@ func (f *fakePrograms) ClassMetrics(_ context.Context, facilityID *uint) (progra
 func (f *fakePrograms) FacilityHealth(_ context.Context, facilityID *uint, days int, tz string) ([]programs.FacilityHealthSummary, error) {
 	f.record("FacilityHealth", facilityID, days, tz)
 	return health, f.err
+}
+
+func (f *fakePrograms) LiveUsers(_ context.Context, providerID uint) ([]coreapi.ProviderUser, bool, error) {
+	f.record("LiveUsers", providerID)
+	if !f.listsUsers {
+		return nil, false, f.err
+	}
+	return providerUsers, true, f.err
+}
+
+func (f *fakePrograms) MappingsChanged(providerID, userID uint) {
+	f.record("MappingsChanged", providerID, userID)
 }
 
 // testToken is the shared service token in these tests.
@@ -303,6 +329,14 @@ var questions = []question{
 		},
 		wantMethod: "FacilityHealth", wantArgs: []any{&facilityID, 7, "America/Chicago"}, want: health,
 	},
+	{
+		name: "LiveUsers",
+		ask: func(ctx context.Context, c *programs.Client) (any, error) {
+			users, ok, err := c.LiveUsers(ctx, 2)
+			return liveUsers{users, ok}, err
+		},
+		wantMethod: "LiveUsers", wantArgs: []any{uint(2)}, want: liveUsers{providerUsers, true},
+	},
 }
 
 // TestRoundTrip asks every question through Client and Handler and checks
@@ -311,7 +345,7 @@ var questions = []question{
 func TestRoundTrip(t *testing.T) {
 	for _, q := range questions {
 		t.Run(q.name, func(t *testing.T) {
-			fake := &fakePrograms{userIDs: []uint{12, 13}}
+			fake := &fakePrograms{userIDs: []uint{12, 13}, listsUsers: true}
 			c := newPair(t, fake)
 			got, err := q.ask(context.Background(), c)
 			if err != nil {
@@ -325,6 +359,40 @@ func TestRoundTrip(t *testing.T) {
 				t.Errorf("Programs was asked %s%v, want %s%v", method, args, q.wantMethod, q.wantArgs)
 			}
 		})
+	}
+}
+
+// A provider that can't list its users answers ok false and no users, not an
+// error.
+func TestLiveUsersNotListed(t *testing.T) {
+	users, ok, err := newPair(t, &fakePrograms{}).LiveUsers(context.Background(), 2)
+	if err != nil || ok || users != nil {
+		t.Errorf("LiveUsers = %v, %v, %v; want nil, false, nil", users, ok, err)
+	}
+}
+
+func TestMappingsChanged(t *testing.T) {
+	fake := &fakePrograms{}
+	newPair(t, fake).MappingsChanged(2, 7)
+	method, args := fake.asked()
+	if method != "MappingsChanged" || !reflect.DeepEqual(args, []any{uint(2), uint(7)}) {
+		t.Errorf("Programs was asked %s%v, want MappingsChanged[2 7]", method, args)
+	}
+}
+
+func TestMappingsChangedLogsFailure(t *testing.T) {
+	var logs bytes.Buffer
+	defer slog.SetDefault(slog.Default())
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+	programs.NewClient(srv.URL, testToken, nil).MappingsChanged(2, 7)
+
+	if line := logs.String(); !strings.Contains(line, "provider_id=2") || !strings.Contains(line, "user_id=7") || !strings.Contains(line, "502") {
+		t.Errorf("log = %q, want the provider, the user and the 502", line)
 	}
 }
 
@@ -502,9 +570,16 @@ func TestWire(t *testing.T) {
 			`{"message":"","data":[{"facility_id":3,"facility_name":"BCF","programs":3,"active_classes":5,"enrollment":40,` +
 				`"missing_attendance":2,"attendance_concerns":1}]}`,
 		},
+		{
+			"live-users", `{"provider_id":2}`,
+			"LiveUsers", []any{uint(2)},
+			`{"message":"","data":{"users":[{"username":"jdoe","name_first":"Jane","name_last":"Doe","email":"jdoe@x",` +
+				`"external_user_id":"42","external_username":"jane.doe"}],"ok":true}}`,
+		},
+		{"mappings-changed", `{"provider_id":2,"user_id":7}`, "MappingsChanged", []any{uint(2), uint(7)}, `{"message":"","data":null}`},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
-			fake := &fakePrograms{userIDs: []uint{12, 13}}
+			fake := &fakePrograms{userIDs: []uint{12, 13}, listsUsers: true}
 			rec := httptest.NewRecorder()
 			req := newRequest(http.MethodPost, "/internal/v1/programs/"+tc.path, tc.body)
 			programs.NewHandler(fake, testToken).ServeHTTP(rec, req)

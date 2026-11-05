@@ -63,5 +63,13 @@ func NewHandler(p Programs, token string) http.Handler {
 	rpc.Handle(mux, "programs", pathFacilityHealth, func(ctx context.Context, req healthRequest) ([]FacilityHealthSummary, error) {
 		return p.FacilityHealth(ctx, req.FacilityID, req.Days, req.TZ)
 	})
+	rpc.Handle(mux, "programs", pathLiveUsers, func(ctx context.Context, req providerRequest) (liveUsersAnswer, error) {
+		users, ok, err := p.LiveUsers(ctx, req.ProviderID)
+		return liveUsersAnswer{Users: users, OK: ok}, err
+	})
+	rpc.Handle(mux, "programs", pathMappingsChanged, func(_ context.Context, req mappingsRequest) (any, error) {
+		p.MappingsChanged(req.ProviderID, req.UserID)
+		return nil, nil
+	})
 	return rpc.RequireToken(token, mux)
 }

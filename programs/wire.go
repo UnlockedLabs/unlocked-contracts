@@ -1,6 +1,10 @@
 package programs
 
-import "time"
+import (
+	"time"
+
+	"github.com/UnlockedLabs/unlocked-contracts/coreapi"
+)
 
 // The paths Handler serves and Client calls, one per question. Each is a POST
 // with the question's arguments as JSON. Only reachable from inside the
@@ -23,6 +27,8 @@ const (
 	pathEnrollmentByProgramType   = basePath + "enrollment-by-program-type"
 	pathClassMetrics              = basePath + "class-metrics"
 	pathFacilityHealth            = basePath + "facility-health"
+	pathLiveUsers                 = basePath + "live-users"
+	pathMappingsChanged           = basePath + "mappings-changed"
 )
 
 // The arguments each question sends.
@@ -52,5 +58,16 @@ type (
 		FacilityID *uint  `json:"facility_id,omitempty"`
 		Days       int    `json:"days"`
 		TZ         string `json:"tz"`
+	}
+	providerRequest struct {
+		ProviderID uint `json:"provider_id"`
+	}
+	mappingsRequest struct {
+		ProviderID uint `json:"provider_id"`
+		UserID     uint `json:"user_id"`
+	}
+	liveUsersAnswer struct {
+		Users []coreapi.ProviderUser `json:"users"`
+		OK    bool                   `json:"ok"`
 	}
 )
