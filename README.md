@@ -8,10 +8,12 @@ things, with no dependencies outside the standard library.
 
 | Package | What it holds |
 |---|---|
+| `coreapi` | What a product service asks core: `coreapi.Users` and `coreapi.LiveProviders`, their types, an HTTP client for each and `coreapi.NewHandler` (core's side) |
 | `features` | Feature-flag names (`features.OpenContent`, …), `features.All`, `features.Register`, which adds a product's own feature, and `features.Checker`, which asks core whether a feature is on at a facility |
-| `identity` | `identity.Claims`, who is logged in, how to read them from a request's context, and `identity.SessionChecker`, which checks the login for a product service |
+| `identity` | `identity.Claims`, who is logged in, how to read them from a request's context, `identity.SessionChecker`, which checks the login for a product service, and `identity.RequireServiceToken`, which lets only callers with the service token through |
 | `jobs` | Job names (`jobs.GetCourses`, …) and each job's NATS subject (`PubName()`) |
 | `opencontent` | What core asks Open Content: the `OpenContent` interface and its types, `opencontent.Client` (core's side) and `opencontent.NewHandler` (Open Content's side), and the `Notification` Open Content sends to core's websocket |
+| `providerplatforms` | What core asks Provider Platforms: the `ProviderPlatforms` interface and its types, `providerplatforms.Client` (core's side) and `providerplatforms.NewHandler` (Provider Platforms' side) |
 | `users` | User roles (`users.SystemAdmin`, …) and `users.AdminRoles` |
 
 Every value here is stored in a database, sent over NATS or kept in Kratos
@@ -20,7 +22,7 @@ identity traits. Changing one breaks running sites, so the tests pin each one.
 ## Use it
 
 ```bash
-go get github.com/UnlockedLabs/unlocked-contracts@v0.3.1
+go get github.com/UnlockedLabs/unlocked-contracts@v0.4.0
 ```
 
 ```go
@@ -206,6 +208,63 @@ To send a message to a user's open browser tabs, Open Content publishes an
 `opencontent.Notification` as JSON on `opencontent.NotifySubject`, and every
 core server forwards it over its websocket. It's plain NATS, so a message no
 server is listening for is dropped, like one for a user with no open tab.
+
+### Ask Provider Platforms, and let it ask core
+
+Provider Platforms runs as its own service (EN-206), so core asks it questions
+over HTTP, and it asks core for user accounts and Programs' live LMS data. Each
+side comes from one package, so they always agree:
+
+```go
+import (
+	"github.com/UnlockedLabs/unlocked-contracts/coreapi"
+	"github.com/UnlockedLabs/unlocked-contracts/providerplatforms"
+)
+
+// core: one Client, used wherever it needs a providerplatforms.ProviderPlatforms
+pp := providerplatforms.NewClient("http://provider-platforms:8080", token, nil)
+mappings, err := pp.UserMappings(ctx, userID)
+
+// Provider Platforms: serve its answers
+mux.Handle("/internal/v1/provider-platforms/", providerplatforms.NewHandler(answers, token))
+
+// Provider Platforms: ask core
+users := coreapi.NewUsersClient("http://server:8080", token, nil)
+live := coreapi.NewLiveProvidersClient("http://server:8080", token, nil)
+
+// core: serve its answers
+mux.Handle("/internal/v1/core/", coreapi.NewHandler(coreUsers, corePrograms, token))
+```
+
+Core's proxy sends the service token as
+`Authorization: Bearer <token>` and the caller's claims in the
+`identity.ClaimsHeader` (`X-Identity-Claims`) header. Core writes it with
+`identity.SetClaimsHeader(req, claims)`, and the service reads it with
+`identity.ClaimsFromRequest(req)`, which returns false when it is missing or
+not JSON.
+
+- Each question is a `POST /internal/v1/provider-platforms/<question>` (or
+  `/internal/v1/core/users/<method>`, `/internal/v1/core/live-providers/<method>`)
+  with its arguments as JSON, answered in core's `{"message", "data"}` shape.
+  The ingress never routes `/internal`, so only the cluster can reach it.
+- **Routes:** `providerplatforms.Routes` lists the 30 `/api` routes Provider
+  Platforms serves, each with its method and pattern, access (`Admin` or
+  `AnyUser`), the path value that must be the caller unless they are an admin
+  (`UserParam`), and its feature flag. Core's proxy enforces it; the service's
+  route test checks its mux against it.
+- **The service token:** every call carries the shared secret as
+  `Authorization: Bearer <token>`, and every handler compares it in constant time. A
+  missing or wrong token gets a 401; a handler given an empty token rejects
+  everything.
+- Any answer but a 200 is an error, with the service's message. Arguments that
+  aren't valid JSON get a 400; an error from the answerer a 500, logged with
+  `slog`. `Users.Get` for a missing user returns an error matching
+  `coreapi.ErrUserNotFound` (a 404 on the wire), so core's `Users` must return
+  that, not `gorm.ErrRecordNotFound`. `Users.Create` only accepts the student
+  role or none through this contract; any other role gets a 400.
+- Each question times out after 10 seconds, the demo seed and reset after 5
+  minutes, and sooner if the caller's context ends.
+- `LiveProviders.MappingsChanged` returns nothing: it logs a failure instead.
 
 ## Develop
 
