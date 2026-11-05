@@ -48,12 +48,12 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          pattern='^(feat|fix|chore|docs|refactor|test|ci|build|perf|revert)(\([a-z0-9._/-]+\))?!?: .+'
+          pattern='^(feat|fix|chore|docs|refactor|test|ci|build|perf|revert|style)(\([a-z0-9._/-]+\))?!?: .+'
           bad=0
           while IFS= read -r subject; do
             if ! printf '%s' "$subject" | grep -Eq "$pattern"; then
               echo "::error::not a conventional commit: $subject"
               bad=1
             fi
-          done < <(git log --format=%s "$BASE..$HEAD")
+          done < <(git log --no-merges --format=%s "$BASE..$HEAD")
           exit $bad
