@@ -53,6 +53,10 @@ jobs:
           while IFS= read -r subject; do
             if ! printf '%s' "$subject" | grep -Eq "$pattern"; then
               echo "::error::not a conventional commit: $subject"
+              if [[ $subject == 'Revert "'* ]]; then
+                inner=${subject#Revert \"}
+                echo "::error::reword it to: revert: ${inner%\"}"
+              fi
               bad=1
             fi
           done < <(git log --no-merges --format=%s "$BASE..$HEAD")
