@@ -13,6 +13,7 @@ things, with no dependencies outside the standard library.
 | `identity` | `identity.Claims`, who is logged in, how to read them from a request's context, `identity.SessionChecker`, which checks the login for a product service, and `identity.RequireServiceToken`, which lets only callers with the service token through |
 | `jobs` | Job names (`jobs.GetCourses`, …) and each job's NATS subject (`PubName()`) |
 | `opencontent` | What core asks Open Content: the `OpenContent` interface and its types, `opencontent.Client` (core's side) and `opencontent.NewHandler` (Open Content's side), and the `Notification` Open Content sends to core's websocket |
+| `programs` | What core asks Programs: the `Programs` interface and its types, `programs.Client` (core's side) and `programs.NewHandler` (Programs' side) |
 | `providerplatforms` | What core asks Provider Platforms: the `ProviderPlatforms` interface and its types, `providerplatforms.Client` (core's side) and `providerplatforms.NewHandler` (Provider Platforms' side) |
 | `users` | User roles (`users.SystemAdmin`, …) and `users.AdminRoles` |
 
@@ -22,7 +23,7 @@ identity traits. Changing one breaks running sites, so the tests pin each one.
 ## Use it
 
 ```bash
-go get github.com/UnlockedLabs/unlocked-contracts@v0.4.0
+go get github.com/UnlockedLabs/unlocked-contracts@v0.5.0
 ```
 
 ```go
@@ -208,6 +209,39 @@ To send a message to a user's open browser tabs, Open Content publishes an
 `opencontent.Notification` as JSON on `opencontent.NotifySubject`, and every
 core server forwards it over its websocket. It's plain NATS, so a message no
 server is listening for is dropped, like one for a user with no open tab.
+
+### Ask Programs
+
+Programs runs as its own service (EN-207), so core asks it questions over
+HTTP, the same way it asks Open Content:
+
+```go
+import "github.com/UnlockedLabs/unlocked-contracts/programs"
+
+// core: one Client at startup, used wherever it needs a programs.Programs
+p := programs.NewClient("http://programs:8080", token, nil)
+ids, err := p.EnrolledUserIDs(ctx, classID)
+
+// Programs: serve its answers (anything that implements Programs)
+mux.Handle("/internal/v1/programs/", programs.NewHandler(answers, token))
+```
+
+- Each question is a `POST /internal/v1/programs/<question>` with its
+  arguments as JSON, answered in core's `{"message", "data"}` shape. The
+  ingress never routes `/internal`, so only the cluster can reach it.
+- Every call carries the shared service token as a bearer token. A missing or
+  wrong token gets a 401; a handler given an empty token rejects everything.
+- Any answer but a 200 is an error, with Programs' message. Arguments that
+  aren't valid JSON get a 400; an error from Programs a 500, logged with
+  `slog`.
+- Each question times out after 10 seconds, and sooner if the caller's context
+  ends.
+- `EndEnrollmentsForTransfer` and `WithdrawEnrollments` change nothing when
+  called again, so core can retry them.
+- Programs also holds the Canvas and Essential Education code behind
+  `coreapi.LiveProviders`. Provider Platforms still asks core for it, and core
+  answers with `LiveUsers` and `MappingsChanged`, which logs a failure instead
+  of returning it.
 
 ### Ask Provider Platforms, and let it ask core
 
