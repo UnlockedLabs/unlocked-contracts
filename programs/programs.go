@@ -29,11 +29,15 @@ type Programs interface {
 	TransferConflicts(ctx context.Context, userID, toFacilityID uint) ([]ResidentTransferProgramConflicts, error)
 	// EndEnrollmentsForTransfer marks the resident's current enrollments at
 	// fromFacilityID as ended by a transfer. Core calls it before it commits
-	// the transfer, and calling it again changes nothing.
+	// the transfer, so a failure here leaves the resident where they were. If
+	// the transfer then fails, the enrollments stay ended until it's retried;
+	// calling it again changes nothing.
 	EndEnrollmentsForTransfer(ctx context.Context, userID, fromFacilityID uint) error
 	// WithdrawEnrollments marks the user's current enrollments as withdrawn,
 	// because their account was deactivated. Core calls it before it commits
-	// the deactivation, and calling it again changes nothing.
+	// the deactivation, so a failure here leaves the account active. If the
+	// deactivation then fails, the enrollments stay withdrawn until it's
+	// retried; calling it again changes nothing.
 	WithdrawEnrollments(ctx context.Context, userID uint) error
 
 	// ResidentPrograms is every enrollment a resident has had, with its
