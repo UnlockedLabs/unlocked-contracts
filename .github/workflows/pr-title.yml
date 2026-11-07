@@ -1,6 +1,6 @@
 # Squash and merge lands a multi-commit PR on main under its title, so the
 # title must be a conventional commit too. The "conventional commits" job in
-# ci.yml checks the commits; keep the two patterns in sync. Same check as
+# conventional-commits.yml checks the commits; keep the two patterns in sync. Same check as
 # the other UnlockEd repos (see docs/repo-standard.md in unlocked-core).
 name: pr title
 
