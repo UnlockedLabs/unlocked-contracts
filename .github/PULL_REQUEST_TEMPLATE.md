@@ -5,6 +5,7 @@
 - [ ] All acceptance criteria verified
 - [ ] Functions according to **ticket specifications**
 - [ ] Branch rebased with latest main
+- [ ] PR title and every commit are conventional commits (`feat:`, `fix:`, `docs:`...); a squash merge lands under the PR title
 - [ ] No existing value renamed or removed (values are stored in databases and sent over NATS)
 - [ ] Tests updated for every new value
 - [ ] Breaking changes called out below, with the version bump they need
