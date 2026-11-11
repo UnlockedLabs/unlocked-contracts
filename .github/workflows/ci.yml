@@ -1,4 +1,4 @@
-# Vet, test and lint the module, and check commit messages.
+# Vet, test and lint the module.
 name: ci
 
 on:
@@ -32,28 +32,3 @@ jobs:
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.14.0
-
-  commits:
-    name: conventional commits
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-
-      - name: Check commit subjects
-        env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          pattern='^(feat|fix|chore|docs|refactor|test|ci|build|perf|revert)(\([a-z0-9._/-]+\))?!?: .+'
-          bad=0
-          while IFS= read -r subject; do
-            if ! printf '%s' "$subject" | grep -Eq "$pattern"; then
-              echo "::error::not a conventional commit: $subject"
-              bad=1
-            fi
-          done < <(git log --format=%s "$BASE..$HEAD")
-          exit $bad
