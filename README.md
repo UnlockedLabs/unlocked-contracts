@@ -13,6 +13,7 @@ things, with no dependencies outside the standard library.
 | `identity` | `identity.Claims`, who is logged in, how to read them from a request's context, `identity.SessionChecker`, which checks the login for a product service, and `identity.RequireServiceToken`, which lets only callers with the service token through |
 | `jobs` | Job names (`jobs.GetCourses`, …) and each job's NATS subject (`PubName()`) |
 | `opencontent` | What core asks Open Content: the `OpenContent` interface and its types, `opencontent.Client` (core's side) and `opencontent.NewHandler` (Open Content's side), and the `Notification` Open Content sends to core's websocket |
+| `permissions` | Screen names (`permissions.Programs`, …), actions (`permissions.View`, `Add`, `Edit`, `Delete`) and `permissions.Grant`, what a group may do on a screen |
 | `programs` | What core asks Programs: the `Programs` interface and its types, `programs.Client` (core's side) and `programs.NewHandler` (Programs' side) |
 | `providerplatforms` | What core asks Provider Platforms: the `ProviderPlatforms` interface and its types, `providerplatforms.Client` (core's side) and `providerplatforms.NewHandler` (Provider Platforms' side) |
 | `users` | User roles (`users.SystemAdmin`, …) and `users.AdminRoles` |
@@ -88,6 +89,29 @@ turned away as not logged in is logged with `slog` at Info, with the reason.
 - **Nothing is cached:** each request asks Kratos and core, as core asks
   Kratos and its database, so a logout or a deactivation applies to the next
   request. Each call times out after 2 seconds.
+
+### Check a permission
+
+An admin's access to each screen comes from the groups they're in, which
+admins manage in core. Core puts the result on the Claims, so check it with
+`Can` before the handler runs:
+
+```go
+import "github.com/UnlockedLabs/unlocked-contracts/permissions"
+
+if !claims.Can(permissions.Classes, permissions.Edit) {
+	// 403: their groups don't let them edit classes
+}
+```
+
+- **It only narrows access.** Keep the route's other checks, such as the
+  admin check and the record's facility.
+- **Each screen has an on/off switch.** Until an admin switches a screen on,
+  `Can` is true for it, so the route behaves as it did before.
+- System admins and residents always pass: permissions govern the other
+  admins.
+- Claims are built per request, so a change applies to the user's next
+  request.
 
 ### Check a feature
 

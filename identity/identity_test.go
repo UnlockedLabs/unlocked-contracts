@@ -7,6 +7,7 @@ import (
 
 	"github.com/UnlockedLabs/unlocked-contracts/features"
 	"github.com/UnlockedLabs/unlocked-contracts/identity"
+	"github.com/UnlockedLabs/unlocked-contracts/permissions"
 	"github.com/UnlockedLabs/unlocked-contracts/users"
 )
 
@@ -57,6 +58,41 @@ func TestHasFeature(t *testing.T) {
 	}
 }
 
+func TestCan(t *testing.T) {
+	grants := map[permissions.Screen]permissions.Grant{
+		permissions.Programs: {Add: true},
+	}
+	enforced := []permissions.Screen{permissions.Programs, permissions.Classes}
+	tests := []struct {
+		name     string
+		role     users.Role
+		enforced []permissions.Screen
+		screen   permissions.Screen
+		action   permissions.Action
+		want     bool
+	}{
+		{"granted view", users.FacilityAdmin, enforced, permissions.Programs, permissions.View, true},
+		{"granted add", users.DepartmentAdmin, enforced, permissions.Programs, permissions.Add, true},
+		{"edit not granted", users.FacilityAdmin, enforced, permissions.Programs, permissions.Edit, false},
+		{"delete not granted", users.FacilityAdmin, enforced, permissions.Programs, permissions.Delete, false},
+		{"unknown action", users.FacilityAdmin, enforced, permissions.Programs, "export", false},
+		{"enforced screen with no grant", users.FacilityAdmin, enforced, permissions.Classes, permissions.View, false},
+		{"screen switched off", users.FacilityAdmin, enforced, permissions.Reports, permissions.Delete, true},
+		{"nothing switched on", users.FacilityAdmin, nil, permissions.Classes, permissions.Delete, true},
+		{"system admin", users.SystemAdmin, enforced, permissions.Classes, permissions.Delete, true},
+		{"resident", users.Student, enforced, permissions.Classes, permissions.View, true},
+		{"no role", "", enforced, permissions.Classes, permissions.View, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := identity.Claims{Role: tt.role, Permissions: grants, EnforcedScreens: tt.enforced}
+			if got := c.Can(tt.screen, tt.action); got != tt.want {
+				t.Errorf("Can(%q, %q) = %v, want %v", tt.screen, tt.action, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestContext(t *testing.T) {
 	want := &identity.Claims{UserID: 7}
 	got, ok := identity.FromContext(identity.NewContext(context.Background(), want))
@@ -81,13 +117,16 @@ func TestClaimsJSON(t *testing.T) {
 	c := identity.Claims{
 		UserID: 1, Username: "jdoe", Role: users.Student, FacilityID: 2, FacilityName: "North",
 		FeatureAccess: []features.Access{features.OpenContent}, SessionID: "s", TimeZone: "America/Chicago",
+		Permissions:     map[permissions.Screen]permissions.Grant{permissions.Programs: {Edit: true}},
+		EnforcedScreens: []permissions.Screen{permissions.Programs},
 	}
 	got, err := json.Marshal(c)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := `{"user_id":1,"username":"jdoe","role":"student","facility_id":2,"facility_name":"North",` +
-		`"feature_access":["open_content"],"session_id":"s","timezone":"America/Chicago"}`
+		`"feature_access":["open_content"],"session_id":"s","timezone":"America/Chicago",` +
+		`"permissions":{"programs":{"add":false,"edit":true,"delete":false}},"enforced_screens":["programs"]}`
 	if string(got) != want {
 		t.Errorf("json = %s\nwant   %s", got, want)
 	}

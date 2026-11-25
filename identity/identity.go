@@ -9,6 +9,7 @@ import (
 	"slices"
 
 	"github.com/UnlockedLabs/unlocked-contracts/features"
+	"github.com/UnlockedLabs/unlocked-contracts/permissions"
 	"github.com/UnlockedLabs/unlocked-contracts/users"
 )
 
@@ -23,6 +24,12 @@ type Claims struct {
 	FeatureAccess []features.Access `json:"feature_access"`
 	SessionID     string            `json:"session_id"`
 	TimeZone      string            `json:"timezone"`
+	// Permissions is what the user's groups let them do, by screen. A screen
+	// that isn't here can't be viewed.
+	Permissions map[permissions.Screen]permissions.Grant `json:"permissions"`
+	// EnforcedScreens lists the screens whose permissions are switched on.
+	// On every other screen, permissions don't decide anything yet.
+	EnforcedScreens []permissions.Screen `json:"enforced_screens"`
 }
 
 // IsAdmin reports whether the user has any admin role.
@@ -45,6 +52,18 @@ func (c *Claims) HasFeature(fs ...features.Access) bool {
 		}
 	}
 	return true
+}
+
+// Can reports whether the user's permissions let them take action a on screen
+// s. It only ever narrows access, so a route still runs its other checks too.
+// It's true when the screen's permissions are switched off, and for system
+// admins and residents, whom permissions don't govern.
+func (c *Claims) Can(s permissions.Screen, a permissions.Action) bool {
+	if c.Role == users.SystemAdmin || !c.IsAdmin() || !slices.Contains(c.EnforcedScreens, s) {
+		return true
+	}
+	g, ok := c.Permissions[s]
+	return ok && g.Allows(a)
 }
 
 type contextKey struct{}
